@@ -1,0 +1,12 @@
+@JwtAuthApi_HostAddress = http://localhost:5121/auth
+
+POST {{JwtAuthApi_HostAddress}}/signup
+Content-Type: application/json
+#Authorization: Bearer 
+
+{
+    "Username": "test",
+    "Password": "1234"
+}
+
+###
