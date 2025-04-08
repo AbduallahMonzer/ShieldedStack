@@ -9,23 +9,23 @@ using Microsoft.IdentityModel.Tokens;
 using Microsoft.AspNetCore.Authorization;
 using JwtAuthApi.Models;
 
-namespace JwtAuthApi.Controllers
-{
-    [ApiController]
-    [Authorize]
-    [Route("auth")]
-    public class AuthController : ControllerBase
-    {
-        private readonly string _connectionString;
-        private readonly string _jwtSecret;
+namespace JwtAuthApi.Controllers;
 
-        public AuthController(IConfiguration configuration)
-        {
-            _connectionString = configuration.GetConnectionString("DefaultConnection") ??
-                throw new InvalidOperationException("Missing DB connection string");
-            _jwtSecret = configuration["JwtSettings:SecretKey"] ??
-                throw new InvalidOperationException("JWT Secret Key is missing");
-        }
+[ApiController]
+[Authorize]
+[Route("auth")]
+public class AuthController : ControllerBase
+{
+    private readonly string _connectionString;
+    private readonly string _jwtSecret;
+
+    public AuthController(IConfiguration configuration)
+    {
+        _connectionString = configuration.GetConnectionString("DefaultConnection") ??
+            throw new InvalidOperationException("Missing DB connection string");
+        _jwtSecret = configuration["JwtSettings:SecretKey"] ??
+            throw new InvalidOperationException("JWT Secret Key is missing");
+    }
 
     [HttpPost("signup")]
     [AllowAnonymous]
@@ -37,50 +37,49 @@ namespace JwtAuthApi.Controllers
             return BadRequest("Username and Password are required");
         }
 
-    NpgsqlConnection? conn = null;
+        NpgsqlConnection? conn = null;
 
-    try
-    {
-        conn = new NpgsqlConnection(_connectionString);
-        conn.Open();
-
-        var checkCmd = new NpgsqlCommand(
-            @"SELECT COUNT(*) FROM user_account 
-            WHERE username = @username", conn);
-
-        checkCmd.Parameters.Add("@username", 
-            NpgsqlTypes.NpgsqlDbType.Varchar).Value = user.Username;
-        long? userCount = (long?)checkCmd.ExecuteScalar();
-
-        if (userCount > 0)
+        try
         {
-            return Conflict("Username already exists");
-        }
+            conn = new NpgsqlConnection(_connectionString);
+            conn.Open();
 
-        var insertCmd = new NpgsqlCommand(@"INSERT INTO user_account
-            (username, password, salt, email, phone_number, role)
-            VALUES (@username, @password, @salt, @email, @phone_number, @role)
-            RETURNING id", conn);
+            var checkCmd = new NpgsqlCommand(@"
+                SELECT COUNT(*)
+                FROM user_account 
+                WHERE username = @username", conn);
 
-        insertCmd.Parameters.Add("username", NpgsqlTypes.NpgsqlDbType.Varchar).Value = user.Username;
+            checkCmd.Parameters.Add("@username", 
+                NpgsqlTypes.NpgsqlDbType.Varchar).Value = user.Username;
+            long? userCount = (long?)checkCmd.ExecuteScalar();
 
-        string salt = PasswordHashUtility.GenerateSalt();
-        string hashedPassword = PasswordHashUtility.HashPassword(user.Password, salt);
+            if (userCount > 0)
+            {
+                return Conflict("Username already exists");
+            }
 
-        insertCmd.Parameters.Add("password", 
-            NpgsqlTypes.NpgsqlDbType.Varchar).Value = hashedPassword;
-        insertCmd.Parameters.Add("salt", 
-            NpgsqlTypes.NpgsqlDbType.Varchar).Value = salt;
-        insertCmd.Parameters.Add("email", 
-            NpgsqlTypes.NpgsqlDbType.Varchar).Value = user.Email ?? (object)DBNull.Value;
-        insertCmd.Parameters.Add("phone_number", 
-            NpgsqlTypes.NpgsqlDbType.Varchar).Value = user.PhoneNumber ?? (object)DBNull.Value;
-        insertCmd.Parameters.Add("role", 
-            NpgsqlTypes.NpgsqlDbType.Varchar).Value = user.Role ?? "user";
+            var insertCmd = new NpgsqlCommand(@"INSERT INTO user_account
+                (username, password, salt, email, phone_number, role)
+                VALUES (@username, @password, @salt, @email, @phone_number, @role)
+                RETURNING id", conn);
 
-        var newUserId = insertCmd.ExecuteScalar();
+            insertCmd.Parameters.Add("username", NpgsqlTypes.NpgsqlDbType.Varchar).Value = user.Username;
 
-        
+            string salt = PasswordHashUtility.GenerateSalt();
+            string hashedPassword = PasswordHashUtility.HashPassword(user.Password, salt);
+
+            insertCmd.Parameters.Add("password", 
+                NpgsqlTypes.NpgsqlDbType.Varchar).Value = hashedPassword;
+            insertCmd.Parameters.Add("salt", 
+                NpgsqlTypes.NpgsqlDbType.Varchar).Value = salt;
+            insertCmd.Parameters.Add("email", 
+                NpgsqlTypes.NpgsqlDbType.Varchar).Value = user.Email ?? (object)DBNull.Value;
+            insertCmd.Parameters.Add("phone_number", 
+                NpgsqlTypes.NpgsqlDbType.Varchar).Value = user.PhoneNumber ?? (object)DBNull.Value;
+            insertCmd.Parameters.Add("role", 
+                NpgsqlTypes.NpgsqlDbType.Varchar).Value = user.Role ?? "user";
+
+            var newUserId = insertCmd.ExecuteScalar();
             string token = GenerateJwtToken(user.Username);
 
             Response.Cookies.Append("AuthToken", token, new CookieOptions
@@ -104,15 +103,15 @@ namespace JwtAuthApi.Controllers
     }
 
 
-        [HttpPost("login")]
-        [AllowAnonymous]
-        public IActionResult Login([FromBody] LoginRequest loginRequest)
+    [HttpPost("login")]
+    [AllowAnonymous]
+    public IActionResult Login([FromBody] LoginRequest loginRequest)
+    {
+        if (string.IsNullOrEmpty(loginRequest?.Username)
+            || string.IsNullOrEmpty(loginRequest?.Password))
         {
-            if (loginRequest == null || string.IsNullOrEmpty(loginRequest.Username)
-            || string.IsNullOrEmpty(loginRequest.Password))
-            {
             return BadRequest("Username and Password are required");
-            }
+        }
 
         try
         {
@@ -121,16 +120,25 @@ namespace JwtAuthApi.Controllers
             var cmd = new NpgsqlCommand(
                 "SELECT password, salt FROM user_account WHERE username = @username", conn);
             cmd.Parameters.AddWithValue("username", loginRequest.Username);
-            using var reader = cmd.ExecuteReader();
 
-            if (!reader.Read())
+            var reader = cmd.ExecuteReader();
+            string? storedHashedPassword = null;
+            string? storedSalt = null;
+            try
             {
-                return Unauthorized("Invalid username or password");
-            }
+                if (!reader.Read())
+                {
+                    return Unauthorized("Invalid username or password");
+                }
 
-            string storedHashedPassword = reader.GetString(0);
-            string storedSalt = reader.GetString(1);
-            reader.Close();
+                storedHashedPassword = reader.GetString(0);
+                storedSalt = reader.GetString(1);
+            }
+            finally
+            {
+                if(reader != null && !reader.IsClosed)
+                    reader.Close();
+            }
 
             string hashedInputPassword = PasswordHashUtility.
                 HashPassword(loginRequest.Password, storedSalt);
@@ -151,26 +159,27 @@ namespace JwtAuthApi.Controllers
             });
 
             return Ok("Login successful");
-            }
-            catch (Exception ex)
-            {
-            return StatusCode(500, $"Internal server error: {ex.Message}");
-            }
         }
-        [HttpGet("me")]
-        public IActionResult Me()
+        catch (Exception ex)
         {
-            var username = User.Identity?.Name;
-            var role = User.Claims.FirstOrDefault(c => c.Type == "role")?.Value;
-
-            if (string.IsNullOrEmpty(username))
-                return Unauthorized();
-
-            return Ok(new { username, role });
+            return StatusCode(500, $"Internal server error: {ex.Message}");
         }
+    }
 
-    private string GenerateJwtToken(string username)
-    {
+[HttpGet("me")]
+public IActionResult Me()
+{
+    var username = User.Identity?.Name;
+    var role = User.Claims.FirstOrDefault(c => c.Type == "role")?.Value;
+
+    if (string.IsNullOrEmpty(username))
+        return Unauthorized();
+
+    return Ok(new { username, role });
+}
+
+private string GenerateJwtToken(string username)
+{
     var conn = new NpgsqlConnection(_connectionString);
     try
     {
@@ -211,12 +220,11 @@ namespace JwtAuthApi.Controllers
             conn.Close(); 
         }
     }
-    }
-    }
+}
+}
 
-    public class LoginRequest
-    {
-        public string? Username { get; set; }
-        public string? Password { get; set; }
-    }
-    }
+public class LoginRequest
+{
+    public string? Username { get; set; }
+    public string? Password { get; set; }
+}
