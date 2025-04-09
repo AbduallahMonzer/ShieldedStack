@@ -1,7 +1,8 @@
-import React, { useState } from "react";
+import React, { useState, useCallback } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import { Form, Button, Container, Row, Col, Alert } from "react-bootstrap";
 import "bootstrap/dist/css/bootstrap.min.css";
+import { CONSTANTS } from "../constants";
 
 const AuthRegister = ({ isLogin }) => {
   const [username, setUsername] = useState("");
@@ -10,34 +11,40 @@ const AuthRegister = ({ isLogin }) => {
 
   const navigate = useNavigate();
 
-  const handleSubmit = async (e) => {
-    e.preventDefault();
+  const handleSubmit = useCallback(() => {
+    const process = async (e) => {
+      e.preventDefault();
 
-    const url = isLogin ? "/auth/login" : "/auth/signup";
+      const url = isLogin ? "/auth/login" : "/auth/signup";
 
-    try {
-      const response = await fetch(`http://localhost:5121${url}`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          username,
-          password,
-        }),
-      });
+      try {
+        const response = await fetch(`${CONSTANTS.api_base_url}${url}`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            username,
+            password,
+          }),
+        });
 
-      if (response.ok) {
-        const data = await response.json();
-        localStorage.setItem("token", data.token);
-        navigate("/home");
-      } else {
-        setErrorMessage("Failed to authenticate");
+        console.debug(response);
+
+        if (response.ok) {
+          const data = await response.json();
+          localStorage.setItem("token", data.token);
+          navigate("/home");
+        } else {
+          setErrorMessage("Failed to authenticate");
+        }
+      } catch (error) {
+        setErrorMessage("An error occurred, please try again");
       }
-    } catch (error) {
-      setErrorMessage("An error occurred, please try again");
-    }
-  };
+    };
+
+    process();
+  }, [isLogin, navigate, username, password]);
 
   return (
     <Container className="d-flex justify-content-center align-items-center min-vh-100">

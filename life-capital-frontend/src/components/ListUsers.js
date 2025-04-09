@@ -1,12 +1,12 @@
 import React, { useEffect, useState } from "react";
 import { Container, Table } from "react-bootstrap";
-
+import { CONSTANTS } from "../constants";
 const ListUsers = () => {
   const [users, setUsers] = useState([]);
-
+  const url = `${CONSTANTS.api_base_url}${CONSTANTS.api_listUser_url}`;
   useEffect(() => {
     const fetchUsers = async () => {
-      const response = await fetch("http://localhost:5121/api/list_users", {
+      const response = await fetch(url, {
         method: "GET",
         credentials: "include",
       });
@@ -22,7 +22,7 @@ const ListUsers = () => {
     };
 
     fetchUsers();
-  }, []);
+  });
 
   return (
     <Container className="mt-5">

@@ -35,7 +35,9 @@ public IActionResult CompleteUserProfile([FromBody] User user)
         conn = new NpgsqlConnection(_connectionString);
         conn.Open();
         var checkCmd = new NpgsqlCommand(
-            @"SELECT COUNT(*) FROM user_account WHERE username = @username",
+            @"SELECT COUNT(*) 
+            FROM user_account 
+            WHERE username = @username",
             conn);
 
         var checkParam = new NpgsqlParameter("username", 

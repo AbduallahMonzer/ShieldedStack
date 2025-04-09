@@ -1,13 +1,14 @@
 import React, { useEffect, useState } from "react";
 import { Container, Button, Row, Col, Spinner } from "react-bootstrap";
 import NavbarComponent from "./NavbarComponent";
-
+import { CONSTANTS } from "../constants";
 const HomePage = () => {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
+  const url = `${CONSTANTS.api_base_url}${CONSTANTS.api_listUser_url}`;
 
   useEffect(() => {
-    fetch("http://localhost:5121/api/list_users", {
+    fetch(url, {
       method: "GET",
       credentials: "include",
     })
@@ -25,7 +26,7 @@ const HomePage = () => {
         console.error("Error fetching user info:", err);
         setLoading(false);
       });
-  }, []);
+  });
 
   if (loading) {
     return (
