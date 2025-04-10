@@ -1,4 +1,4 @@
-    using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Configuration;
 using Npgsql;
 using System;
@@ -82,14 +82,6 @@ public class AuthController : ControllerBase
             var newUserId = insertCmd.ExecuteScalar();
             string token = GenerateJwtToken(user.Username);
 
-            Response.Cookies.Append("AuthToken", token, new CookieOptions
-            {
-                HttpOnly = true,
-                Secure = true,
-                SameSite = SameSiteMode.Strict,
-                Expires = DateTime.UtcNow.AddHours(3)
-            });
-
             return Ok(new { message = "Signup and login successful", userId = newUserId, token });
         }
         catch (Exception ex)
@@ -103,81 +95,113 @@ public class AuthController : ControllerBase
         }
     }
 
-
     [HttpPost("login")]
-    [AllowAnonymous]
-    public IActionResult Login([FromBody] LoginRequest loginRequest)
+[AllowAnonymous]
+public IActionResult Login([FromBody] LoginRequest loginRequest)
+{
+    if (string.IsNullOrEmpty(loginRequest?.Username)
+        || string.IsNullOrEmpty(loginRequest?.Password))
     {
-        if (string.IsNullOrEmpty(loginRequest?.Username)
-            || string.IsNullOrEmpty(loginRequest?.Password))
-        {
-            return BadRequest("Username and Password are required");
-        }
+        return BadRequest("Username and Password are required");
+    }
 
+    try
+    {
+        using var conn = new NpgsqlConnection(_connectionString);
+        conn.Open();
+        var cmd = new NpgsqlCommand(
+            "SELECT password, salt FROM user_account WHERE username = @username", conn);
+        cmd.Parameters.AddWithValue("username", loginRequest.Username);
+
+        var reader = cmd.ExecuteReader();
+        string? storedHashedPassword = null;
+        string? storedSalt = null;
         try
         {
-            using var conn = new NpgsqlConnection(_connectionString);
-            conn.Open();
-            var cmd = new NpgsqlCommand(
-                "SELECT password, salt FROM user_account WHERE username = @username", conn);
-            cmd.Parameters.AddWithValue("username", loginRequest.Username);
-
-            var reader = cmd.ExecuteReader();
-            string? storedHashedPassword = null;
-            string? storedSalt = null;
-            try
-            {
-                if (!reader.Read())
-                {
-                    return Unauthorized("Invalid username or password");
-                }
-
-                storedHashedPassword = reader.GetString(0);
-                storedSalt = reader.GetString(1);
-            }
-            finally
-            {
-                if(reader != null && !reader.IsClosed)
-                    reader.Close();
-            }
-
-            string hashedInputPassword = PasswordHashUtility.
-                HashPassword(loginRequest.Password, storedSalt);
-            if (!hashedInputPassword.Equals(storedHashedPassword, 
-                StringComparison.OrdinalIgnoreCase))
+            if (!reader.Read())
             {
                 return Unauthorized("Invalid username or password");
             }
 
-            string token = GenerateJwtToken(loginRequest.Username);
-
-            Response.Cookies.Append("AuthToken", token, new CookieOptions
-            {
-                HttpOnly = true,  
-                Secure = true,    
-                SameSite = SameSiteMode.Strict,  
-                Expires = DateTime.UtcNow.AddHours(3)  
-            });
-
-            return Ok("Login successful");
+            storedHashedPassword = reader.GetString(0);
+            storedSalt = reader.GetString(1);
         }
-        catch (Exception ex)
+        finally
         {
-            return StatusCode(500, $"Internal server error: {ex.Message}");
+            if(reader != null && !reader.IsClosed)
+                reader.Close();
         }
+
+        string hashedInputPassword = PasswordHashUtility.
+            HashPassword(loginRequest.Password, storedSalt);
+        if (!hashedInputPassword.Equals(storedHashedPassword, 
+            StringComparison.OrdinalIgnoreCase))
+        {
+            return Unauthorized("Invalid username or password");
+        }
+
+        string token = GenerateJwtToken(loginRequest.Username);
+
+
+        return Ok(new { message = "Login successful", token });
+    }
+    catch (Exception ex)
+    {
+        return StatusCode(500, $"Internal server error: {ex.Message}");
+    }
+}
+
+
+// public static class Cookie
+// {
+//     public static void AppendAuthToken(HttpResponse response, string token)
+//     {
+//         response.Cookies.Append("AuthToken", token, new CookieOptions
+//         {
+//             HttpOnly = true,
+//             Secure = true,
+//             SameSite = SameSiteMode.Strict,
+//             Expires = DateTime.UtcNow.AddHours(3)
+//         });
+//     }
+// }
+
+[HttpGet("v")]
+public IActionResult V()
+{
+    var authorizationHeader = Request.Headers["Authorization"].ToString();
+    if (string.IsNullOrEmpty(authorizationHeader) || !authorizationHeader.StartsWith("Bearer "))
+    {
+        return Unauthorized("Authorization token missing or invalid.");
     }
 
-[HttpGet("me")]
-public IActionResult Me()
-{
-    var username = User.Identity?.Name;
-    var role = User.Claims.FirstOrDefault(c => c.Type == "role")?.Value;
+    var token = authorizationHeader.Substring("Bearer ".Length).Trim();
 
-    if (string.IsNullOrEmpty(username))
-        return Unauthorized();
+    try
+    {
+        var principal = ValidateJwtToken(token);
+        if (principal == null)
+        {
+            return Unauthorized("Invalid token.");
+        }
 
-    return Ok(new { username, role });
+        var username = principal.Identity?.Name;
+        if (string.IsNullOrEmpty(username))
+        {
+            return Unauthorized("Invalid token.");
+        }
+
+        string newToken = GenerateJwtToken(username);
+    
+        return Ok(new { username, message = "Token refreshed" });
+    }
+    catch (Exception ex)
+    {
+        return Unauthorized("Invalid token.");
+    }
 }
+
+
 
 private string GenerateJwtToken(string username)
 {
@@ -185,10 +209,13 @@ private string GenerateJwtToken(string username)
     try
     {
         conn.Open();
-        var cmd = new NpgsqlCommand(@"SELECT role FROM user_account
-            WHERE username = @username", conn);
+        var cmd = new NpgsqlCommand(@"SELECT role 
+            FROM user_account
+            WHERE username = @username", 
+            conn);
         
-        var param = new NpgsqlParameter("username", NpgsqlTypes.NpgsqlDbType.Text);
+        var param = new NpgsqlParameter("username", 
+            NpgsqlTypes.NpgsqlDbType.Text);
         param.Value = username;
         cmd.Parameters.Add(param);
 

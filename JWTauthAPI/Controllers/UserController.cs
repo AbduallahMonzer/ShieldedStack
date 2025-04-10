@@ -177,12 +177,5 @@ public IActionResult CompleteUserProfile([FromBody] User user)
                     conn.Close();
             }
         }
-
-        // POST: api/refresh_token - Refresh JWT token
-        [HttpPost("refresh_token")] 
-        public IActionResult RefreshToken()
-        {
-            return Unauthorized("JWT refresh logic goes here");
-        }
     }
 }
