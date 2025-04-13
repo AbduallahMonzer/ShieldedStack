@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from "react";
+import React, { useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import { Form, Button, Container, Row, Col, Alert } from "react-bootstrap";
 import "bootstrap/dist/css/bootstrap.min.css";
@@ -8,46 +8,37 @@ const Login = () => {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
-
   const navigate = useNavigate();
 
-  const handleSubmit = useCallback(
-    (e) => {
-      e.preventDefault();
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setErrorMessage("");
 
-      const processLogin = async () => {
-        try {
-          const response = await fetch(`${CONSTANTS.api_base_url}/auth/login`, {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({ username, password }),
-          });
+    try {
+      const res = await fetch(`${CONSTANTS.api_base_url}/auth/login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username, password }),
+      });
 
-          if (response.ok) {
-            const data = await response.json();
-            localStorage.setItem("token", data.token);
-            navigate("/home");
-          } else {
-            setErrorMessage("Failed to authenticate");
-          }
-        } catch (error) {
-          setErrorMessage("An error occurred, please try again");
-        }
-      };
+      const data = await res.json();
 
-      processLogin();
-    },
-    [username, password, navigate]
-  );
+      if (res.ok && data.token) {
+        localStorage.setItem("token", data.token);
+        navigate("/"); // Redirect to home after login
+      } else {
+        setErrorMessage(data.message || "Failed to authenticate");
+      }
+    } catch {
+      setErrorMessage("An unexpected error occurred");
+    }
+  };
 
   return (
     <Container className="d-flex justify-content-center align-items-center min-vh-100">
-      <Row className="justify-content-center w-100">
+      <Row className="w-100 justify-content-center">
         <Col md={6} lg={4}>
           <h2 className="text-center mb-4">Login</h2>
-
           {errorMessage && <Alert variant="danger">{errorMessage}</Alert>}
 
           <Form onSubmit={handleSubmit}>

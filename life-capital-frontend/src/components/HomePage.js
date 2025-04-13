@@ -1,72 +1,95 @@
-import React, { useEffect, useState } from "react";
-import { Container, Button, Row, Col, Spinner } from "react-bootstrap";
-import NavbarComponent from "./NavbarComponent";
+import { useEffect, useState, useCallback } from "react";
+import { useNavigate } from "react-router-dom";
+import { Container, Spinner, Alert, Row, Col, Card } from "react-bootstrap";
 import { CONSTANTS } from "../constants";
-import { Navigate } from "react-router-dom";
+import NavbarComponent from "./NavbarComponent";
+
 const HomePage = () => {
-	const [user, setUser] = useState(null);
-	const [loading, setLoading] = useState(true);
-	const [authenticated, setAuthenticated] = useState(undefined);
-	const url = `${CONSTANTS.api_base_url}/auth/token/verify`;
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const navigate = useNavigate();
+  const username = localStorage.getItem("username") || "User";
 
-	useEffect(() => {
-		async function verify_token() {
-			try {
-				const response = await fetch(url, {
-					method: "POST",
-					credentials: "include"
-				});
+  const onInvalidToken = useCallback(() => {
+    navigate("/login");
+  }, [navigate]);
 
-				setAuthenticated(response.ok);
-			} catch (err) {
-				setLoading = false;
-			}
-		}
+  useEffect(() => {
+    const verifyToken = async () => {
+      const token = localStorage.getItem("token");
+      if (!token) onInvalidToken();
 
-		verify_token();
-	}, []);
+      let validToken = false;
 
-	if (loading) {
-		return (
-			<Container className="text-center mt-5">
-				<Spinner animation="border" />
-			</Container>
-		);
-	}
+      try {
+        const response = await fetch(
+          `${CONSTANTS.api_base_url}/auth/token/verify`,
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${token}`,
+            },
+          }
+        );
 
-	if (!authenticated) {
-		return <Navigate to="/login" />;
-	}
+        if (response.ok) {
+          const data = await response.json();
+          localStorage.setItem("token", data.token);
+          validToken = true;
+        } else {
+          localStorage.removeItem("token");
+        }
+      } catch (err) {
+        console.error(err);
+        setError("Something went wrong.");
+      } finally {
+        setLoading(false);
 
-	return (
-		<>
-			<NavbarComponent />
-			<Container className="mt-5 text-center">
-				<Row className="justify-content-center">
-					<Col md={8}>
-						<h1>Welcome to Life Capital 👋</h1>
-						{user && (
-							<p>
-								Hello, <strong>{user.username}</strong>!
-							</p>
-						)}
+        if (!validToken) onInvalidToken();
+      }
+    };
 
-						<div className="mt-4">
-							<Button variant="primary" href="/profile" className="mx-2">
-								Complete Your Profile
-							</Button>
+    verifyToken();
+  }, [onInvalidToken]);
 
-							{user?.role === "admin" && (
-								<Button variant="warning" href="/list-users" className="mx-2">
-									List Users
-								</Button>
-							)}
-						</div>
-					</Col>
-				</Row>
-			</Container>
-		</>
-	);
+  if (loading) {
+    return (
+      <Container className="text-center mt-5">
+        <Spinner animation="border" variant="primary" />
+      </Container>
+    );
+  }
+
+  if (error) {
+    return (
+      <Container className="mt-5">
+        <Alert variant="danger" className="text-center fw-bold fs-5 shadow">
+          {error}
+        </Alert>
+      </Container>
+    );
+  }
+
+  return (
+    <>
+      <NavbarComponent username={username} />
+      <Container className="d-flex justify-content-center align-items-center min-vh-100">
+        <Row>
+          <Col>
+            <Card className="p-5 text-center shadow rounded-4 border-0">
+              <h1 className="display-4 fw-bold mb-3 text-primary">
+                Welcome to <span className="text-dark">Life Capital</span>
+              </h1>
+              <p className="lead text-muted">
+                Building a healthier tomorrow, starting today.🚀
+              </p>
+            </Card>
+          </Col>
+        </Row>
+      </Container>
+    </>
+  );
 };
 
 export default HomePage;

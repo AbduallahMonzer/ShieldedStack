@@ -169,7 +169,7 @@ public class AuthController : ControllerBase
     [HttpPost("token/verify")]
     public IActionResult V()
     {
-        return Ok();
+        return RefreshToken();
     }
 
     [HttpPost("token/refresh")]
