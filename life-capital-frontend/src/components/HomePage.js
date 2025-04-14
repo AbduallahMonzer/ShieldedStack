@@ -8,7 +8,6 @@ const HomePage = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const navigate = useNavigate();
-  const username = localStorage.getItem("username") || "User";
 
   const onInvalidToken = useCallback(() => {
     navigate("/login");
@@ -16,9 +15,6 @@ const HomePage = () => {
 
   useEffect(() => {
     const verifyToken = async () => {
-      const token = localStorage.getItem("token");
-      if (!token) onInvalidToken();
-
       let validToken = false;
 
       try {
@@ -26,19 +22,12 @@ const HomePage = () => {
           `${CONSTANTS.api_base_url}/auth/token/verify`,
           {
             method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              Authorization: `Bearer ${token}`,
-            },
+            credentials: "include",
           }
         );
 
         if (response.ok) {
-          const data = await response.json();
-          localStorage.setItem("token", data.token);
           validToken = true;
-        } else {
-          localStorage.removeItem("token");
         }
       } catch (err) {
         console.error(err);
@@ -73,7 +62,7 @@ const HomePage = () => {
 
   return (
     <>
-      <NavbarComponent username={username} />
+      <NavbarComponent username="User" />
       <Container className="d-flex justify-content-center align-items-center min-vh-100">
         <Row>
           <Col>

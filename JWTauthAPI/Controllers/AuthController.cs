@@ -18,6 +18,7 @@ public class AuthController : ControllerBase
 {
     private readonly string _connectionString;
     private readonly string _jwtSecret;
+    private readonly IConfiguration _OAuthConfig;
 
     public AuthController(IConfiguration configuration)
     {
@@ -25,7 +26,38 @@ public class AuthController : ControllerBase
             throw new InvalidOperationException("Missing DB connection string");
         _jwtSecret = configuration["JwtSettings:SecretKey"] ??
             throw new InvalidOperationException("JWT Secret Key is missing");
+        _OAuthConfig = configuration;
     }
+[HttpGet("oauth/login")]
+public IActionResult RedirectToOAuthProvider()
+{
+    var clientId = _OAuthConfig["OAuth:ClientId"];
+    var redirectUri = _OAuthConfig["OAuth:RedirectUri"];
+
+    if (string.IsNullOrEmpty(clientId) || string.IsNullOrEmpty(redirectUri))
+    {
+        return BadRequest("Missing OAuth configuration. Please check ClientId and RedirectUri.");
+    }
+
+    var authUrl = "https://mail.lifecapital.eg/oauth/authorize";
+
+    var queryParams = new Dictionary<string, string>
+    {
+        {"response_type", "code"},
+        {"client_id", clientId},
+        {"redirect_uri", redirectUri},
+        {"scope", "profile email"},
+        {"state", Guid.NewGuid().ToString()}
+    };
+
+    var queryString = string.Join("&", queryParams.Select(kv =>
+        $"{Uri.EscapeDataString(kv.Key)}={Uri.EscapeDataString(kv.Value)}"));
+
+    var fullUrl = $"{authUrl}?{queryString}";
+
+    return Redirect(fullUrl);
+}
+    
 
     [HttpPost("signup")]
     [AllowAnonymous]
@@ -63,7 +95,8 @@ public class AuthController : ControllerBase
                 VALUES (@username, @password, @salt, @email, @phone_number, @role)
                 RETURNING id", conn);
 
-            insertCmd.Parameters.Add("username", NpgsqlTypes.NpgsqlDbType.Varchar).Value = user.Username;
+            insertCmd.Parameters.Add("username", 
+                NpgsqlTypes.NpgsqlDbType.Varchar).Value = user.Username;
 
             string salt = PasswordHashUtility.GenerateSalt();
             string hashedPassword = PasswordHashUtility.HashPassword(user.Password, salt);
@@ -81,8 +114,9 @@ public class AuthController : ControllerBase
 
             var newUserId = insertCmd.ExecuteScalar();
             string token = GenerateJwtToken(user.Username);
+            Cookie.AppendAuthToken(Response, token);
 
-            return Ok(new { message = "Signup and login successful", userId = newUserId, token });
+            return Ok(new { message = "Signup and login successful", userId = newUserId });
         }
         catch (Exception ex)
         {
@@ -141,9 +175,9 @@ public class AuthController : ControllerBase
             }
 
             string token = GenerateJwtToken(loginRequest.Username);
+            Cookie.AppendAuthToken(Response, token);
 
-
-            return Ok(new { message = "Login successful", token });
+            return Ok(new { message = "Login successful" });
         }
         catch (Exception ex)
         {
@@ -151,42 +185,40 @@ public class AuthController : ControllerBase
         }
     }
 
-
-    // public static class Cookie
+    // [HttpPost("logout")]
+    // public IActionResult Logout()
     // {
-    //     public static void AppendAuthToken(HttpResponse response, string token)
-    //     {
-    //         response.Cookies.Append("AuthToken", token, new CookieOptions
-    //         {
-    //             HttpOnly = true,
-    //             Secure = true,
-    //             SameSite = SameSiteMode.Strict,
-    //             Expires = DateTime.UtcNow.AddHours(3)
-    //         });
-    //     }
+    //     Response.Cookies.Delete("AuthToken");
+    //     return Ok(new { message = "Logged out" });
     // }
 
-    [HttpPost("token/verify")]
-    public IActionResult V()
+    public static class Cookie
     {
-        return RefreshToken();
+        public static void AppendAuthToken(HttpResponse response, string token)
+            {
+                response.Cookies.Append("AuthToken", token, new CookieOptions
+                {
+                    HttpOnly = true,
+                    Secure = true,
+                    SameSite = SameSiteMode.None,
+                    Expires = DateTime.UtcNow.AddHours(3)
+                });
+            }
     }
 
-    [HttpPost("token/refresh")]
-    public IActionResult RefreshToken()
-    {
-        var usernameClaim = HttpContext.User.Claims.FirstOrDefault(c => c.Type == ClaimTypes.Name);
-        if (usernameClaim == null)
-            return Unauthorized();
-
-        string token = GenerateJwtToken(usernameClaim.Value);
-
-        return Ok(new
-        {
-            token
-        });
-    }
-
+    [HttpPost("token/verify-refresh")]
+        public IActionResult VerifyAndRefresh()
+            {
+                var usernameClaim = HttpContext.User.Claims.
+                    FirstOrDefault(c => c.Type == ClaimTypes.Name);
+                if (usernameClaim == null)
+                {
+                    return Unauthorized();
+                }
+                string token = GenerateJwtToken(usernameClaim.Value);
+                Cookie.AppendAuthToken(Response, token);
+                return Ok(new { message = "Token verified and refreshed" });
+            }
 
     private string GenerateJwtToken(string username)
     {
@@ -198,7 +230,7 @@ public class AuthController : ControllerBase
             FROM user_account
             WHERE username = @username",
                 conn);
-
+            
             var param = new NpgsqlParameter("username",
                 NpgsqlTypes.NpgsqlDbType.Text);
             param.Value = username;

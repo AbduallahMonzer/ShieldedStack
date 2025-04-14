@@ -10,11 +10,8 @@ const getRandomColor = () => {
 const NavbarComponent = () => {
   const username = localStorage.getItem("username") || "User";
   const avatarColor = getRandomColor();
-
   const [showDrawer, setShowDrawer] = useState(false);
-
   const handleToggleDrawer = () => setShowDrawer(!showDrawer);
-
   const handleCloseDrawer = () => setShowDrawer(false);
 
   return (

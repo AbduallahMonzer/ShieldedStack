@@ -22,14 +22,14 @@ const Signup = () => {
         headers: {
           "Content-Type": "application/json",
         },
+        credentials: "include",
         body: JSON.stringify(formData),
       });
 
       const data = await response.json();
 
       if (response.ok && data.token) {
-        localStorage.setItem("token", data.token);
-        window.location.href = "/"; // Full page reload to reset app state
+        window.location.href = "/";
       } else {
         throw new Error(data.message || "Signup failed");
       }

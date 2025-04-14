@@ -18,14 +18,14 @@ const Login = () => {
       const res = await fetch(`${CONSTANTS.api_base_url}/auth/login`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        credentials: "include",
         body: JSON.stringify({ username, password }),
       });
 
       const data = await res.json();
 
       if (res.ok && data.token) {
-        localStorage.setItem("token", data.token);
-        navigate("/"); // Redirect to home after login
+        navigate("/");
       } else {
         setErrorMessage(data.message || "Failed to authenticate");
       }

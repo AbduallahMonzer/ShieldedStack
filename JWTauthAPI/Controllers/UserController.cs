@@ -126,7 +126,7 @@ public IActionResult CompleteUserProfile([FromBody] User user)
     }
 }
 
-        
+    [Authorize]    
     [HttpGet("list_users")]
     public IActionResult GetUsers()
     {
