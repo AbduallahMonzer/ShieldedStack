@@ -8,6 +8,9 @@ using System.Text;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.AspNetCore.Authorization;
 using JwtAuthApi.Models;
+using System.Net.Http.Headers;
+using System.Text.Json;
+
 
 namespace JwtAuthApi.Controllers;
 
@@ -18,44 +21,36 @@ public class AuthController : ControllerBase
 {
     private readonly string _connectionString;
     private readonly string _jwtSecret;
-    private readonly IConfiguration _OAuthConfig;
-
-    public AuthController(IConfiguration configuration)
+    private readonly IOAuthService _oAuthService;
+    
+    public AuthController(IConfiguration configuration, IOAuthService oAuthService)
     {
-        _connectionString = configuration.GetConnectionString("DefaultConnection") ??
-            throw new InvalidOperationException("Missing DB connection string");
-        _jwtSecret = configuration["JwtSettings:SecretKey"] ??
-            throw new InvalidOperationException("JWT Secret Key is missing");
-        _OAuthConfig = configuration;
+        _connectionString = configuration.GetConnectionString("DefaultConnection") 
+            ?? throw new InvalidOperationException("Missing DB connection string");
+        _jwtSecret = configuration["JwtSettings:SecretKey"] 
+            ?? throw new InvalidOperationException("JWT Secret Key is missing");
+        _oAuthService = oAuthService;
     }
-[HttpGet("oauth/login")]
+
+    [HttpGet("oauth/login")]
+[AllowAnonymous]
 public IActionResult RedirectToOAuthProvider()
 {
-    var clientId = _OAuthConfig["OAuth:ClientId"];
-    var redirectUri = _OAuthConfig["OAuth:RedirectUri"];
-
-    if (string.IsNullOrEmpty(clientId) || string.IsNullOrEmpty(redirectUri))
-    {
-        return BadRequest("Missing OAuth configuration. Please check ClientId and RedirectUri.");
-    }
+    var clientId = HttpContext.RequestServices.GetRequiredService<IConfiguration>()["OAuth:ClientId"];
+    var redirectUri = HttpContext.RequestServices.GetRequiredService<IConfiguration>()["OAuth:RedirectUri"];
 
     var authUrl = "https://mail.lifecapital.eg/oauth/authorize";
-
     var queryParams = new Dictionary<string, string>
     {
-        {"response_type", "code"},
-        {"client_id", clientId},
-        {"redirect_uri", redirectUri},
-        {"scope", "profile email"},
-        {"state", Guid.NewGuid().ToString()}
+        { "response_type", "code" },
+        { "client_id", clientId },
+        { "redirect_uri", redirectUri },
+        { "scope", "profile email" },
+        { "state", Guid.NewGuid().ToString() }
     };
 
-    var queryString = string.Join("&", queryParams.Select(kv =>
-        $"{Uri.EscapeDataString(kv.Key)}={Uri.EscapeDataString(kv.Value)}"));
-
-    var fullUrl = $"{authUrl}?{queryString}";
-
-    return Redirect(fullUrl);
+    var query = string.Join("&", queryParams.Select(kv => $"{kv.Key}={Uri.EscapeDataString(kv.Value)}"));
+    return Redirect($"{authUrl}?{query}");
 }
     
 
@@ -154,7 +149,7 @@ public IActionResult RedirectToOAuthProvider()
             {
                 if (!reader.Read())
                 {
-                    return Unauthorized("Invalid username or password");
+                    return Unauthorized("Invalid username or password X");
                 }
 
                 storedHashedPassword = reader.GetString(0);
@@ -167,20 +162,21 @@ public IActionResult RedirectToOAuthProvider()
             }
 
             string hashedInputPassword = PasswordHashUtility.
-                HashPassword(loginRequest.Password, storedSalt);
+                HashPassword(loginRequest.Password,storedSalt);
             if (!hashedInputPassword.Equals(storedHashedPassword,
                 StringComparison.OrdinalIgnoreCase))
             {
-                return Unauthorized("Invalid username or password");
+                return Unauthorized("Invalid username or password Y");
             }
 
             string token = GenerateJwtToken(loginRequest.Username);
-            Cookie.AppendAuthToken(Response, token);
+            Cookie.AppendAuthToken(HttpContext.Response, token);
 
             return Ok(new { message = "Login successful" });
         }
         catch (Exception ex)
         {
+            Console.WriteLine(ex);
             return StatusCode(500, $"Internal server error: {ex.Message}");
         }
     }
@@ -200,7 +196,8 @@ public IActionResult RedirectToOAuthProvider()
                 {
                     HttpOnly = true,
                     Secure = true,
-                    SameSite = SameSiteMode.None,
+                    Domain = ".localhost",
+                    SameSite = SameSiteMode.Lax,
                     Expires = DateTime.UtcNow.AddHours(3)
                 });
             }

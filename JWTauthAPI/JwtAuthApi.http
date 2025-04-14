@@ -1,6 +1,6 @@
-@JwtAuthApi_HostAddress = http://localhost:5121/auth
+@JwtAuthApi_HostAddress = https://localhost:7164/auth
 
-POST {{JwtAuthApi_HostAddress}}/Login
+POST {{JwtAuthApi_HostAddress}}/login
 Content-Type: application/json
 #Authorization: Bearer 
 

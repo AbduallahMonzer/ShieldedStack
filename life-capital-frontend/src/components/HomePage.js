@@ -19,7 +19,7 @@ const HomePage = () => {
 
       try {
         const response = await fetch(
-          `${CONSTANTS.api_base_url}/auth/token/verify`,
+          `${CONSTANTS.api_base_url}/auth/token/verify-refresh`,
           {
             method: "POST",
             credentials: "include",

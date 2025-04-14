@@ -24,7 +24,7 @@ const Login = () => {
 
       const data = await res.json();
 
-      if (res.ok && data.token) {
+      if (res.ok) {
         navigate("/");
       } else {
         setErrorMessage(data.message || "Failed to authenticate");
@@ -33,7 +33,9 @@ const Login = () => {
       setErrorMessage("An unexpected error occurred");
     }
   };
-
+  const handleOAuthLogin = () => {
+    window.location.href = `${CONSTANTS.api_base_url}/auth/oauth/login`;
+  };
   return (
     <Container className="d-flex justify-content-center align-items-center min-vh-100">
       <Row className="w-100 justify-content-center">
@@ -68,7 +70,15 @@ const Login = () => {
               Login
             </Button>
           </Form>
-
+          <div className="text-center mt-3">
+            <Button
+              variant="outline-secondary"
+              className="w-100"
+              onClick={handleOAuthLogin}
+            >
+              Login with Life Capital
+            </Button>
+          </div>
           <div className="text-center mt-3">
             Don't have an account? <Link to="/signup">Sign Up</Link>
           </div>

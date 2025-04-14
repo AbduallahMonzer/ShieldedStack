@@ -2,12 +2,14 @@ import React, { useState } from "react";
 import { Link } from "react-router-dom";
 import { Form, Button, Container, Alert } from "react-bootstrap";
 import { CONSTANTS } from "../constants";
+import { useNavigate } from "react-router-dom";
 
 const Signup = () => {
   const [formData, setFormData] = useState({
     username: "",
     password: "",
   });
+  const navigate = useNavigate();
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
@@ -28,8 +30,8 @@ const Signup = () => {
 
       const data = await response.json();
 
-      if (response.ok && data.token) {
-        window.location.href = "/";
+      if (response.ok) {
+        navigate("/");
       } else {
         throw new Error(data.message || "Signup failed");
       }
