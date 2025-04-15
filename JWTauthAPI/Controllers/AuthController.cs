@@ -21,41 +21,148 @@ public class AuthController : ControllerBase
 {
     private readonly string _connectionString;
     private readonly string _jwtSecret;
-    private readonly IOAuthService _oAuthService;
-    
-    public AuthController(IConfiguration configuration, IOAuthService oAuthService)
+    private readonly string _clientId;
+    private readonly string _clientSecret;
+    private readonly IHttpClientFactory _httpClientFactory;
+
+    public AuthController(IConfiguration configuration, IHttpClientFactory httpClientFactory)
     {
-        _connectionString = configuration.GetConnectionString("DefaultConnection") 
+        _connectionString = configuration.GetConnectionString("DefaultConnection")
             ?? throw new InvalidOperationException("Missing DB connection string");
-        _jwtSecret = configuration["JwtSettings:SecretKey"] 
+        _jwtSecret = configuration["JwtSettings:SecretKey"]
             ?? throw new InvalidOperationException("JWT Secret Key is missing");
-        _oAuthService = oAuthService;
+        _clientId = configuration["OAuth:ClientId"]
+            ?? throw new InvalidOperationException("OAuth ClientId is missing");
+        _clientSecret = configuration["OAuth:ClientSecret"]
+            ?? throw new InvalidOperationException("OAuth ClientSecret is missing");
+        _httpClientFactory = httpClientFactory;
     }
 
-    [HttpGet("oauth/login")]
-[AllowAnonymous]
-public IActionResult RedirectToOAuthProvider()
-{
-    var clientId = HttpContext.RequestServices.GetRequiredService<IConfiguration>()["OAuth:ClientId"];
-    var redirectUri = HttpContext.RequestServices.GetRequiredService<IConfiguration>()["OAuth:RedirectUri"];
-
-    var authUrl = "https://mail.lifecapital.eg/oauth/authorize";
-    var queryParams = new Dictionary<string, string>
+    [HttpPost("oauth/verify")]
+    [AllowAnonymous]
+    public async Task<IActionResult> OAuthCallback(string code)
     {
-        { "response_type", "code" },
-        { "client_id", clientId },
-        { "redirect_uri", redirectUri },
-        { "scope", "profile email" },
-        { "state", Guid.NewGuid().ToString() }
-    };
+        if (string.IsNullOrEmpty(code))
+        {
+            return BadRequest("Missing authorization code");
+        }
 
-    var query = string.Join("&", queryParams.Select(kv => $"{kv.Key}={Uri.EscapeDataString(kv.Value)}"));
-    return Redirect($"{authUrl}?{query}");
-}
+        var tokenUrl = "https://mail.lifecapital.eg/oauth/token";
+        var profileUrl = "https://mail.lifecapital.eg/oauth/profile";
+        var redirectUri = "https://localhost:3000/oauth/callback";
+
+        var httpClient = _httpClientFactory.CreateClient();
+        httpClient.Timeout = TimeSpan.FromSeconds(10);
+
+        var tokenRequest = new HttpRequestMessage(HttpMethod.Post, tokenUrl);
+        tokenRequest.Content = new FormUrlEncodedContent(new Dictionary<string, string>
+        {
+            { "grant_type", "authorization_code" },
+            { "code", code },
+            { "redirect_uri", redirectUri },
+            { "client_id", _clientId },
+            { "client_secret", _clientSecret }
+        });
+
+        var tokenResponse = await httpClient.SendAsync(tokenRequest);
+        if (!tokenResponse.IsSuccessStatusCode)
+        {
+            return StatusCode((int)tokenResponse.StatusCode, 
+                "Failed to exchange token");
+        }
+
+        var tokenJson = await tokenResponse.Content.ReadAsStringAsync();
+        var tokenData = JsonSerializer.Deserialize<JsonElement>(tokenJson);
+        if (!tokenData.TryGetProperty("access_token", out var accessTokenElement))
+        {
+            return BadRequest("Access token not found in response");
+        }
+
+        var accessToken = accessTokenElement.GetString();
+        var profileRequest = new HttpRequestMessage(HttpMethod.Get, profileUrl);
+        profileRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
+
+        var profileResponse = await httpClient.SendAsync(profileRequest);
+        if (!profileResponse.IsSuccessStatusCode)
+        {
+            return StatusCode((int)profileResponse.StatusCode, "Failed to get profile");
+        }
+
+        var profileJson = await profileResponse.Content.ReadAsStringAsync();
+        var profile = JsonSerializer.Deserialize<JsonElement>(profileJson);
+
+        var email = profile.GetProperty("email").GetString();
+        var username = email?.Split('@')[0];
+
+        if (string.IsNullOrEmpty(username))
+        {
+            return BadRequest("Invalid profile info");
+        }
+
+        NpgsqlConnection ?conn = null;
+        try
+        {
+            conn = new NpgsqlConnection(_connectionString);
+            conn.Open();
+
+            var checkCmd = new NpgsqlCommand(@"SELECT COUNT(*) 
+                FROM user_account 
+                WHERE username = @username", 
+                conn);
+            checkCmd.Parameters.Add("@username", 
+                NpgsqlTypes.NpgsqlDbType.Varchar).Value = username;
+                object? result = checkCmd.ExecuteScalar();
+                long count = result is DBNull or null ? 0 : Convert.ToInt64(result);
+
+
+            if (count == 0)
+            {
+                var insertCmd = new NpgsqlCommand(@"INSERT INTO user_account 
+                    (username, 
+                    password, 
+                    salt, 
+                    email, 
+                    role) 
+                    VALUES (@username, 
+                            @password, 
+                            @salt, 
+                            @email, 
+                            @role)", 
+                            conn);
+                insertCmd.Parameters.Add("@username", 
+                    NpgsqlTypes.NpgsqlDbType.Varchar).Value = username;
+                insertCmd.Parameters.Add("@password", 
+                    NpgsqlTypes.NpgsqlDbType.Varchar).Value = "oauth";
+                insertCmd.Parameters.Add("@salt", 
+                    NpgsqlTypes.NpgsqlDbType.Varchar).Value = "oauth";
+                insertCmd.Parameters.Add("@email", 
+                    NpgsqlTypes.NpgsqlDbType.Varchar).Value = email;
+                insertCmd.Parameters.Add("@role", 
+                    NpgsqlTypes.NpgsqlDbType.Varchar).Value = "user";
+                insertCmd.ExecuteNonQuery();
+            }
+
+            string jwt = GenerateJwtToken(username);
+            Cookie.AppendAuthToken(Response, jwt);
+            return Ok();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine(ex);
+            return StatusCode(500, "Internal server error during OAuth");
+        }
+        finally
+        {
+            conn?.Close();
+        }
+    }
+
+
+
     
 
-    [HttpPost("signup")]
-    [AllowAnonymous]
+[HttpPost("signup")]
+[AllowAnonymous]
     public IActionResult SignUp([FromBody] User user)
     {
         if (user == null || string.IsNullOrEmpty(user.Username) ||

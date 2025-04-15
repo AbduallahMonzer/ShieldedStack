@@ -33,9 +33,25 @@ const Login = () => {
       setErrorMessage("An unexpected error occurred");
     }
   };
-  const handleOAuthLogin = () => {
-    window.location.href = `${CONSTANTS.api_base_url}/auth/oauth/login`;
+
+  const generateRandomState = () => {
+    return Math.random().toString(36).substring(2, 15);
   };
+
+  const handleOAuthLogin = () => {
+    const state = generateRandomState();
+
+    const params = new URLSearchParams({
+      response_type: "code",
+      client_id: "2076c247bac9",
+      redirect_uri: `https://${window.location.host}/oauth/callback`,
+      scope: "profile",
+      state,
+    });
+
+    window.location.href = `https://mail.lifecapital.eg/oauth/authorize?${params.toString()}`;
+  };
+
   return (
     <Container className="d-flex justify-content-center align-items-center min-vh-100">
       <Row className="w-100 justify-content-center">
@@ -70,6 +86,7 @@ const Login = () => {
               Login
             </Button>
           </Form>
+
           <div className="text-center mt-3">
             <Button
               variant="outline-secondary"
@@ -79,6 +96,7 @@ const Login = () => {
               Login with Life Capital
             </Button>
           </div>
+
           <div className="text-center mt-3">
             Don't have an account? <Link to="/signup">Sign Up</Link>
           </div>

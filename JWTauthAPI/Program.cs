@@ -6,7 +6,6 @@ using JwtAuthApi.Models;
 var builder = WebApplication.CreateBuilder(args);
 
 // Enable CORS for React frontend
-builder.Services.AddScoped<IOAuthService, OAuthService>();
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("AllowLocalhost3000", policy =>
@@ -17,7 +16,7 @@ builder.Services.AddCors(options =>
             .AllowCredentials(); 
     });
 });
-
+builder.Services.AddHttpClient();
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
@@ -64,7 +63,7 @@ if (app.Environment.IsDevelopment())
 
 app.UseRouting();
 app.UseCors("AllowLocalhost3000");
-// app.UseHttpsRedirection(); 
+app.UseHttpsRedirection(); 
 
 // Auth middlewares
 app.UseAuthentication();
