@@ -11,7 +11,6 @@ using JwtAuthApi.Models;
 using System.Net.Http.Headers;
 using System.Text.Json;
 
-
 namespace JwtAuthApi.Controllers;
 
 [ApiController]
@@ -43,113 +42,96 @@ public class AuthController : ControllerBase
     public async Task<IActionResult> OAuthCallback(string code)
     {
         if (string.IsNullOrEmpty(code))
-        {
-            return BadRequest("Missing authorization code");
-        }
-
-        var tokenUrl = "https://mail.lifecapital.eg/oauth/token";
-        var profileUrl = "https://mail.lifecapital.eg/oauth/profile";
-        var redirectUri = "https://localhost:3000/oauth/callback";
+            return ResponseHelper.HandleMissing("Authorization code");
 
         var httpClient = _httpClientFactory.CreateClient();
         httpClient.Timeout = TimeSpan.FromSeconds(10);
 
-        var tokenRequest = new HttpRequestMessage(HttpMethod.Post, tokenUrl);
+        var tokenRequest = new HttpRequestMessage
+            (HttpMethod.Post, "https://mail.lifecapital.eg/oauth/token");
         tokenRequest.Content = new FormUrlEncodedContent(new Dictionary<string, string>
         {
             { "grant_type", "authorization_code" },
             { "code", code },
-            { "redirect_uri", redirectUri },
+            { "redirect_uri", "https://localhost:3000/oauth/callback" },
             { "client_id", _clientId },
             { "client_secret", _clientSecret }
         });
 
         var tokenResponse = await httpClient.SendAsync(tokenRequest);
         if (!tokenResponse.IsSuccessStatusCode)
-        {
-            return StatusCode((int)tokenResponse.StatusCode, 
-                "Failed to exchange token");
-        }
+            return StatusCode((int)tokenResponse.StatusCode, "Failed to exchange token");
 
-        var tokenJson = await tokenResponse.Content.ReadAsStringAsync();
-        var tokenData = JsonSerializer.Deserialize<JsonElement>(tokenJson);
+        var tokenData = JsonSerializer.Deserialize<JsonElement>
+            (await tokenResponse.Content.ReadAsStringAsync());
         if (!tokenData.TryGetProperty("access_token", out var accessTokenElement))
-        {
-            return BadRequest("Access token not found in response");
-        }
+            return BadRequest("Access token not found");
 
-        var accessToken = accessTokenElement.GetString();
-        var profileRequest = new HttpRequestMessage(HttpMethod.Get, profileUrl);
-        profileRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
-
+        var profileRequest = new HttpRequestMessage(HttpMethod.Get, 
+            "https://mail.lifecapital.eg/oauth/profile");
+        profileRequest.Headers.Authorization = new AuthenticationHeaderValue    
+            ("Bearer", accessTokenElement.GetString());
         var profileResponse = await httpClient.SendAsync(profileRequest);
+
         if (!profileResponse.IsSuccessStatusCode)
-        {
             return StatusCode((int)profileResponse.StatusCode, "Failed to get profile");
-        }
 
-        var profileJson = await profileResponse.Content.ReadAsStringAsync();
-        var profile = JsonSerializer.Deserialize<JsonElement>(profileJson);
-
+        var profile = JsonSerializer.Deserialize<JsonElement>
+            (await profileResponse.Content.ReadAsStringAsync());
         var email = profile.GetProperty("email").GetString();
         var username = email?.Split('@')[0];
 
         if (string.IsNullOrEmpty(username))
-        {
             return BadRequest("Invalid profile info");
-        }
 
-        NpgsqlConnection ?conn = null;
+        NpgsqlConnection? conn = null;
         try
         {
-            conn = new NpgsqlConnection(_connectionString);
-            conn.Open();
+            conn = DbHelper.OpenConnection(_connectionString);
 
-            var checkCmd = new NpgsqlCommand(@"SELECT COUNT(*) 
-                FROM user_account 
-                WHERE username = @username", 
-                conn);
-            checkCmd.Parameters.Add("@username", 
-                NpgsqlTypes.NpgsqlDbType.Varchar).Value = username;
-                object? result = checkCmd.ExecuteScalar();
-                long count = result is DBNull or null ? 0 : Convert.ToInt64(result);
-
-
-            if (count == 0)
+            var checkCmd = DbHelper.CreateCommand(conn, @"
+                SELECT COUNT(*) FROM user_account WHERE username = @username", new()
             {
-                var insertCmd = new NpgsqlCommand(@"INSERT INTO user_account 
-                    (username, 
-                    password, 
-                    salt, 
-                    email, 
-                    role) 
-                    VALUES (@username, 
-                            @password, 
-                            @salt, 
-                            @email, 
-                            @role)", 
-                            conn);
-                insertCmd.Parameters.Add("@username", 
-                    NpgsqlTypes.NpgsqlDbType.Varchar).Value = username;
-                insertCmd.Parameters.Add("@password", 
-                    NpgsqlTypes.NpgsqlDbType.Varchar).Value = "oauth";
-                insertCmd.Parameters.Add("@salt", 
-                    NpgsqlTypes.NpgsqlDbType.Varchar).Value = "oauth";
-                insertCmd.Parameters.Add("@email", 
-                    NpgsqlTypes.NpgsqlDbType.Varchar).Value = email;
-                insertCmd.Parameters.Add("@role", 
-                    NpgsqlTypes.NpgsqlDbType.Varchar).Value = "user";
+                { "@username", username }
+            });
+
+            var result = checkCmd.ExecuteScalar();
+            var exists = result is not null && Convert.ToInt64(result) > 0;
+
+            if (!exists)
+            {
+                var insertCmd = DbHelper.CreateCommand(conn, @"
+                    INSERT INTO user_account 
+                        (username, 
+                        password, 
+                        salt, 
+                        email, 
+                        role)
+                        VALUES 
+                        (@username, 
+                        @password, 
+                        @salt, 
+                        @email, 
+                        @role)", new()
+                {
+                    { "@username", username },
+                    { "@password", "oauth" },
+                    { "@salt", "oauth" },
+                    { "@email", email },
+                    { "@role", "user" }
+                });
+
                 insertCmd.ExecuteNonQuery();
             }
 
-            string jwt = GenerateJwtToken(username);
-            Cookie.AppendAuthToken(Response, jwt);
+            var role = exists ? DbHelper.GetUserRole(conn, username) : "user";
+            var token = JwtHelper.GenerateToken(username, role, _jwtSecret);
+            CookieHelper.AppendAuthToken(Response, token);
             return Ok();
         }
         catch (Exception ex)
         {
-            Console.WriteLine(ex);
-            return StatusCode(500, "Internal server error during OAuth");
+            return ResponseHelper.HandleServerError("OAuth", ex);
         }
         finally
         {
@@ -157,73 +139,68 @@ public class AuthController : ControllerBase
         }
     }
 
-
-
-    
-
-[HttpPost("signup")]
-[AllowAnonymous]
+    [HttpPost("signup")]
+    [AllowAnonymous]
     public IActionResult SignUp([FromBody] User user)
     {
-        if (user == null || string.IsNullOrEmpty(user.Username) ||
-            string.IsNullOrEmpty(user.Password))
-        {
-            return BadRequest("Username and Password are required");
-        }
+        if (user == null || string.IsNullOrEmpty(user.Username)
+            || string.IsNullOrEmpty(user.Password))
+            return ResponseHelper.HandleMissing("Username and Password");
 
         NpgsqlConnection? conn = null;
-
         try
         {
-            conn = new NpgsqlConnection(_connectionString);
-            conn.Open();
+            conn = DbHelper.OpenConnection(_connectionString);
 
-            var checkCmd = new NpgsqlCommand(@"
-                SELECT COUNT(*)
+            var checkCmd = DbHelper.CreateCommand(conn, @"
+                SELECT COUNT(*) 
                 FROM user_account 
-                WHERE username = @username", conn);
-
-            checkCmd.Parameters.Add("@username",
-                NpgsqlTypes.NpgsqlDbType.Varchar).Value = user.Username;
-            long? userCount = (long?)checkCmd.ExecuteScalar();
-
-            if (userCount > 0)
+                WHERE username = @username", 
+                new()
             {
+                { "@username", user.Username }
+            });
+
+            if ((long?)checkCmd.ExecuteScalar() > 0)
                 return Conflict("Username already exists");
-            }
 
-            var insertCmd = new NpgsqlCommand(@"INSERT INTO user_account
-                (username, password, salt, email, phone_number, role)
-                VALUES (@username, @password, @salt, @email, @phone_number, @role)
-                RETURNING id", conn);
+            var salt = PasswordHashUtility.GenerateSalt();
+            var hashed = PasswordHashUtility.HashPassword(user.Password, salt);
 
-            insertCmd.Parameters.Add("username", 
-                NpgsqlTypes.NpgsqlDbType.Varchar).Value = user.Username;
+            var insertCmd = DbHelper.CreateCommand(conn, @"
+                INSERT INTO user_account 
+                    (username, 
+                    password, 
+                    salt, 
+                    email, 
+                    phone_number, 
+                    role)
+                    VALUES 
+                        (@username, 
+                        @password, 
+                        @salt, 
+                        @email, 
+                        @phone_number, 
+                        @role)
+                        RETURNING id", new()
+            {
+                { "@username", user.Username },
+                { "@password", hashed },
+                { "@salt", salt },
+                { "@email", user.Email },
+                { "@phone_number", user.PhoneNumber },
+                { "@role", user.Role ?? "user" }
+            });
 
-            string salt = PasswordHashUtility.GenerateSalt();
-            string hashedPassword = PasswordHashUtility.HashPassword(user.Password, salt);
+            var userId = insertCmd.ExecuteScalar();
+            var token = JwtHelper.GenerateToken(user.Username, user.Role ?? "user", _jwtSecret);
+            CookieHelper.AppendAuthToken(Response, token);
 
-            insertCmd.Parameters.Add("password",
-                NpgsqlTypes.NpgsqlDbType.Varchar).Value = hashedPassword;
-            insertCmd.Parameters.Add("salt",
-                NpgsqlTypes.NpgsqlDbType.Varchar).Value = salt;
-            insertCmd.Parameters.Add("email",
-                NpgsqlTypes.NpgsqlDbType.Varchar).Value = user.Email ?? (object)DBNull.Value;
-            insertCmd.Parameters.Add("phone_number",
-                NpgsqlTypes.NpgsqlDbType.Varchar).Value = user.PhoneNumber ?? (object)DBNull.Value;
-            insertCmd.Parameters.Add("role",
-                NpgsqlTypes.NpgsqlDbType.Varchar).Value = user.Role ?? "user";
-
-            var newUserId = insertCmd.ExecuteScalar();
-            string token = GenerateJwtToken(user.Username);
-            Cookie.AppendAuthToken(Response, token);
-
-            return Ok(new { message = "Signup and login successful", userId = newUserId });
+            return Ok(new { message = "Signup and login successful", userId });
         }
         catch (Exception ex)
         {
-            Console.WriteLine(ex);
-            return StatusCode(500, $"Error occurred during signup: {ex.Message}");
+            return ResponseHelper.HandleServerError("signup", ex);
         }
         finally
         {
@@ -235,140 +212,151 @@ public class AuthController : ControllerBase
     [AllowAnonymous]
     public IActionResult Login([FromBody] LoginRequest loginRequest)
     {
-        if (string.IsNullOrEmpty(loginRequest?.Username)
+        if (string.IsNullOrEmpty(loginRequest?.Username) 
             || string.IsNullOrEmpty(loginRequest?.Password))
-        {
-            return BadRequest("Username and Password are required");
-        }
+            return ResponseHelper.HandleMissing("Username and Password");
 
         try
         {
-            using var conn = new NpgsqlConnection(_connectionString);
-            conn.Open();
-            var cmd = new NpgsqlCommand(
-                "SELECT password, salt FROM user_account WHERE username = @username", conn);
-            cmd.Parameters.AddWithValue("username", loginRequest.Username);
+            var conn = DbHelper.OpenConnection(_connectionString);
+
+            var cmd = DbHelper.CreateCommand(conn, @"SELECT 
+                password,  
+                salt, 
+                role 
+                FROM user_account 
+                WHERE username = @username", new()
+            {
+                { "@username", loginRequest.Username }
+            });
 
             var reader = cmd.ExecuteReader();
-            string? storedHashedPassword = null;
-            string? storedSalt = null;
-            try
+            string? hashed = null, salt = null, role = "user";
+
+            if (reader.Read())
             {
-                if (!reader.Read())
-                {
-                    return Unauthorized("Invalid username or password X");
-                }
-
-                storedHashedPassword = reader.GetString(0);
-                storedSalt = reader.GetString(1);
+                hashed = reader.GetString(0);
+                salt = reader.GetString(1);
+                role = reader.GetString(2);
             }
-            finally
-            {
-                if (reader != null && !reader.IsClosed)
-                    reader.Close();
-            }
+            reader.Close();
+            conn.Close();
 
-            string hashedInputPassword = PasswordHashUtility.
-                HashPassword(loginRequest.Password,storedSalt);
-            if (!hashedInputPassword.Equals(storedHashedPassword,
-                StringComparison.OrdinalIgnoreCase))
-            {
-                return Unauthorized("Invalid username or password Y");
-            }
+            var hashedInput = PasswordHashUtility.HashPassword(loginRequest.Password, salt!);
+            if (!hashedInput.Equals(hashed, StringComparison.OrdinalIgnoreCase))
+                return Unauthorized("Invalid username or password");
 
-            string token = GenerateJwtToken(loginRequest.Username);
-            Cookie.AppendAuthToken(HttpContext.Response, token);
-
+            var token = JwtHelper.GenerateToken(loginRequest.Username, role, _jwtSecret);
+            CookieHelper.AppendAuthToken(Response, token);
             return Ok(new { message = "Login successful" });
         }
         catch (Exception ex)
         {
-            Console.WriteLine(ex);
-            return StatusCode(500, $"Internal server error: {ex.Message}");
+            return ResponseHelper.HandleServerError("login", ex);
         }
     }
 
-    // [HttpPost("logout")]
-    // public IActionResult Logout()
-    // {
-    //     Response.Cookies.Delete("AuthToken");
-    //     return Ok(new { message = "Logged out" });
-    // }
-
-    public static class Cookie
+    [HttpPost("logout")]
+    public IActionResult Logout()
     {
-        public static void AppendAuthToken(HttpResponse response, string token)
-            {
-                response.Cookies.Append("AuthToken", token, new CookieOptions
-                {
-                    HttpOnly = true,
-                    Secure = true,
-                    Domain = ".localhost",
-                    SameSite = SameSiteMode.Lax,
-                    Expires = DateTime.UtcNow.AddHours(3)
-                });
-            }
+        Response.Cookies.Delete("AuthToken");
+        return Ok(new { message = "Logged out" });
     }
 
     [HttpPost("token/verify-refresh")]
-        public IActionResult VerifyAndRefresh()
-            {
-                var usernameClaim = HttpContext.User.Claims.
-                    FirstOrDefault(c => c.Type == ClaimTypes.Name);
-                if (usernameClaim == null)
-                {
-                    return Unauthorized();
-                }
-                string token = GenerateJwtToken(usernameClaim.Value);
-                Cookie.AppendAuthToken(Response, token);
-                return Ok(new { message = "Token verified and refreshed" });
-            }
-
-    private string GenerateJwtToken(string username)
+    public IActionResult VerifyAndRefresh()
     {
-        var conn = new NpgsqlConnection(_connectionString);
-        try
+        var username = HttpContext.User.Claims.FirstOrDefault
+            (c => c.Type == ClaimTypes.Name)?.Value;
+        if (username == null) return Unauthorized();
+
+        var role = DbHelper.GetUserRole(DbHelper.OpenConnection(_connectionString), username);
+        var token = JwtHelper.GenerateToken(username, role, _jwtSecret);
+        CookieHelper.AppendAuthToken(Response, token);
+        return Ok(new { message = "Token verified and refreshed" });
+    }
+}
+
+public static class CookieHelper
+{
+    public static void AppendAuthToken(HttpResponse response, string token)
+    {
+        response.Cookies.Append("AuthToken", token, new CookieOptions
         {
-            conn.Open();
-            var cmd = new NpgsqlCommand(@"SELECT role 
-            FROM user_account
-            WHERE username = @username",
-                conn);
-            
-            var param = new NpgsqlParameter("username",
-                NpgsqlTypes.NpgsqlDbType.Text);
-            param.Value = username;
-            cmd.Parameters.Add(param);
+            HttpOnly = true,
+            Secure = true,
+            Domain = ".localhost",
+            SameSite = SameSiteMode.Lax,
+            Expires = DateTime.UtcNow.AddHours(3)
+        });
+    }
+}
 
-            var role = (string?)cmd.ExecuteScalar() ?? "user";
-            conn.Close();
+public static class DbHelper
+{
+    public static NpgsqlConnection OpenConnection(string connStr)
+    {
+        var conn = new NpgsqlConnection(connStr);
+        conn.Open();
+        return conn;
+    }
 
-            var securityKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_jwtSecret));
-            var credentials = new SigningCredentials(securityKey, SecurityAlgorithms.HmacSha256);
-
-            var claims = new[]
-            {
-                new Claim(ClaimTypes.Name, username),
-                new Claim("role", role),
-                new Claim(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString())
-            };
-
-            var token = new JwtSecurityToken(
-                issuer: "Issuer",
-                audience: "Audience",
-                claims: claims,
-                expires: DateTime.UtcNow.AddHours(3),
-                signingCredentials: credentials);
-
-            return new JwtSecurityTokenHandler().WriteToken(token);
-        }
-        finally
+    public static NpgsqlCommand CreateCommand(NpgsqlConnection conn, 
+        string sql, Dictionary<string, object?> parameters)
+    {
+        var cmd = new NpgsqlCommand(sql, conn);
+        foreach (var param in parameters)
         {
-            if (conn.State == System.Data.ConnectionState.Open)
-            {
-                conn.Close();
-            }
+            cmd.Parameters.Add(param.Key, 
+                NpgsqlTypes.NpgsqlDbType.Varchar).Value = param.Value ?? DBNull.Value;
         }
+        return cmd;
+    }
+
+    public static string GetUserRole(NpgsqlConnection conn, string username)
+    {
+        var cmd = CreateCommand(conn, @"SELECT role    
+        FROM user_account 
+        WHERE username = @username", 
+        new() { { "@username", username } });
+        return (string?)cmd.ExecuteScalar() ?? "user";
+    }
+}
+
+public static class JwtHelper
+{
+    public static string GenerateToken(string username, string role, string secret)
+    {
+        var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(secret));
+        var creds = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
+
+        var claims = new[]
+        {
+            new Claim(ClaimTypes.Name, username),
+            new Claim("role", role),
+            new Claim(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString())
+        };
+
+        var token = new JwtSecurityToken(
+            issuer: "Issuer",
+            audience: "Audience",
+            claims: claims,
+            expires: DateTime.UtcNow.AddHours(3),
+            signingCredentials: creds);
+
+        return new JwtSecurityTokenHandler().WriteToken(token);
+    }
+}
+
+public static class ResponseHelper
+{
+    public static IActionResult HandleMissing(string name) =>
+        new BadRequestObjectResult($"{name} is required");
+
+    public static IActionResult HandleServerError(string context, Exception ex)
+    {
+        Console.WriteLine(ex);
+        return new ObjectResult($"Internal error during {context}") { StatusCode = 500 };
     }
 }
 
