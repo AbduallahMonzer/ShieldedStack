@@ -24,95 +24,99 @@ public class AuthController : ControllerBase
     private readonly string _clientSecret;
     private readonly IHttpClientFactory _httpClientFactory;
 
-    public AuthController(IConfiguration configuration, IHttpClientFactory httpClientFactory)
+public AuthController(IConfiguration configuration, IHttpClientFactory httpClientFactory)
+{
+    _connectionString = configuration.GetConnectionString("DefaultConnection")
+        ?? throw new InvalidOperationException("Missing DB connection string");
+    _jwtSecret = configuration["JwtSettings:SecretKey"]
+        ?? throw new InvalidOperationException("JWT Secret Key is missing");
+    _clientId = configuration["OAuth:ClientId"]
+        ?? throw new InvalidOperationException("OAuth ClientId is missing");
+    _clientSecret = configuration["OAuth:ClientSecret"]
+        ?? throw new InvalidOperationException("OAuth ClientSecret is missing");
+    _httpClientFactory = httpClientFactory;
+}
+
+[HttpPost("oauth/verify")]
+[AllowAnonymous]
+public async Task<IActionResult> OAuthCallback(string code)
+{
+    if (string.IsNullOrEmpty(code))
+        return ResponseHelper.HandleMissing("Authorization code");
+
+    var httpClient = _httpClientFactory.CreateClient();
+    httpClient.Timeout = TimeSpan.FromSeconds(10);
+
+    var tokenRequest = new HttpRequestMessage
+        (HttpMethod.Post, "https://mail.lifecapital.eg/oauth/token");
+    tokenRequest.Content = new FormUrlEncodedContent(new Dictionary<string, string>
     {
-        _connectionString = configuration.GetConnectionString("DefaultConnection")
-            ?? throw new InvalidOperationException("Missing DB connection string");
-        _jwtSecret = configuration["JwtSettings:SecretKey"]
-            ?? throw new InvalidOperationException("JWT Secret Key is missing");
-        _clientId = configuration["OAuth:ClientId"]
-            ?? throw new InvalidOperationException("OAuth ClientId is missing");
-        _clientSecret = configuration["OAuth:ClientSecret"]
-            ?? throw new InvalidOperationException("OAuth ClientSecret is missing");
-        _httpClientFactory = httpClientFactory;
-    }
+        { "grant_type", "authorization_code" },
+        { "code", code },
+        { "redirect_uri", "https://localhost:3000/oauth/callback" },
+        { "client_id", _clientId },
+        { "client_secret", _clientSecret }
+    });
 
-    [HttpPost("oauth/verify")]
-    [AllowAnonymous]
-    public async Task<IActionResult> OAuthCallback(string code)
+    var tokenResponse = await httpClient.SendAsync(tokenRequest);
+    if (!tokenResponse.IsSuccessStatusCode)
+        return StatusCode((int)tokenResponse.StatusCode, "Failed to exchange token");
+
+    var tokenData = JsonSerializer.Deserialize<JsonElement>
+        (await tokenResponse.Content.ReadAsStringAsync());
+    if (!tokenData.TryGetProperty("access_token", out var accessTokenElement))
+        return BadRequest("Access token not found");
+
+    var profileRequest = new HttpRequestMessage(HttpMethod.Get, 
+        "https://mail.lifecapital.eg/oauth/profile");
+    profileRequest.Headers.Authorization = new AuthenticationHeaderValue    
+        ("Bearer", accessTokenElement.GetString());
+    var profileResponse = await httpClient.SendAsync(profileRequest);
+
+    if (!profileResponse.IsSuccessStatusCode)
+        return StatusCode((int)profileResponse.StatusCode, "Failed to get profile");
+
+    var profile = JsonSerializer.Deserialize<JsonElement>
+        (await profileResponse.Content.ReadAsStringAsync());
+    var email = profile.GetProperty("email").GetString();
+    var username = email?.Split('@')[0];
+
+    if (string.IsNullOrEmpty(username))
+        return BadRequest("Invalid profile info");
+
+    NpgsqlConnection? conn = null;
+    try
     {
-        if (string.IsNullOrEmpty(code))
-            return ResponseHelper.HandleMissing("Authorization code");
+        conn = DbHelper.OpenConnection(_connectionString);
 
-        var httpClient = _httpClientFactory.CreateClient();
-        httpClient.Timeout = TimeSpan.FromSeconds(10);
-
-        var tokenRequest = new HttpRequestMessage
-            (HttpMethod.Post, "https://mail.lifecapital.eg/oauth/token");
-        tokenRequest.Content = new FormUrlEncodedContent(new Dictionary<string, string>
-        {
-            { "grant_type", "authorization_code" },
-            { "code", code },
-            { "redirect_uri", "https://localhost:3000/oauth/callback" },
-            { "client_id", _clientId },
-            { "client_secret", _clientSecret }
-        });
-
-        var tokenResponse = await httpClient.SendAsync(tokenRequest);
-        if (!tokenResponse.IsSuccessStatusCode)
-            return StatusCode((int)tokenResponse.StatusCode, "Failed to exchange token");
-
-        var tokenData = JsonSerializer.Deserialize<JsonElement>
-            (await tokenResponse.Content.ReadAsStringAsync());
-        if (!tokenData.TryGetProperty("access_token", out var accessTokenElement))
-            return BadRequest("Access token not found");
-
-        var profileRequest = new HttpRequestMessage(HttpMethod.Get, 
-            "https://mail.lifecapital.eg/oauth/profile");
-        profileRequest.Headers.Authorization = new AuthenticationHeaderValue    
-            ("Bearer", accessTokenElement.GetString());
-        var profileResponse = await httpClient.SendAsync(profileRequest);
-
-        if (!profileResponse.IsSuccessStatusCode)
-            return StatusCode((int)profileResponse.StatusCode, "Failed to get profile");
-
-        var profile = JsonSerializer.Deserialize<JsonElement>
-            (await profileResponse.Content.ReadAsStringAsync());
-        var email = profile.GetProperty("email").GetString();
-        var username = email?.Split('@')[0];
-
-        if (string.IsNullOrEmpty(username))
-            return BadRequest("Invalid profile info");
-
-        NpgsqlConnection? conn = null;
-        try
-        {
-            conn = DbHelper.OpenConnection(_connectionString);
-
-            var checkCmd = DbHelper.CreateCommand(conn, @"
-                SELECT COUNT(*) FROM user_account WHERE username = @username", new()
+        var checkCmd = DbHelper.CreateCommand(conn, @"
+            SELECT COUNT(*) 
+            FROM user_account 
+            WHERE username = @username", 
+            new()
             {
                 { "@username", username }
             });
 
-            var result = checkCmd.ExecuteScalar();
-            var exists = result is not null && Convert.ToInt64(result) > 0;
+        var result = checkCmd.ExecuteScalar();
+        var exists = result is not null && Convert.ToInt64(result) > 0;
 
-            if (!exists)
-            {
-                var insertCmd = DbHelper.CreateCommand(conn, @"
-                    INSERT INTO user_account 
-                        (username, 
-                        password, 
-                        salt, 
-                        email, 
-                        role)
-                        VALUES 
-                        (@username, 
-                        @password, 
-                        @salt, 
-                        @email, 
-                        @role)", new()
+        if (!exists)
+        {
+            var insertCmd = DbHelper.CreateCommand(conn, @"
+                INSERT INTO user_account 
+                    (username, 
+                    password, 
+                    salt, 
+                    email, 
+                    role)
+                    VALUES 
+                    (@username, 
+                    @password, 
+                    @salt, 
+                    @email, 
+                    @role)", 
+                    new()
                 {
                     { "@username", username },
                     { "@password", "oauth" },
@@ -122,7 +126,7 @@ public class AuthController : ControllerBase
                 });
 
                 insertCmd.ExecuteNonQuery();
-            }
+        }
 
             var role = exists ? DbHelper.GetUserRole(conn, username) : "user";
             var token = JwtHelper.GenerateToken(username, role, _jwtSecret);
@@ -139,16 +143,17 @@ public class AuthController : ControllerBase
         }
     }
 
-    [HttpPost("signup")]
-    [AllowAnonymous]
-    public IActionResult SignUp([FromBody] User user)
-    {
-        if (user == null || string.IsNullOrEmpty(user.Username)
-            || string.IsNullOrEmpty(user.Password))
-            return ResponseHelper.HandleMissing("Username and Password");
+[HttpPost("signup")]
+[AllowAnonymous]
+public IActionResult SignUp([FromBody] User user)
+{
+    if (user == null 
+        || string.IsNullOrEmpty(user.Username)
+        || string.IsNullOrEmpty(user.Password))
+    return ResponseHelper.HandleMissing("Username and Password");
 
-        NpgsqlConnection? conn = null;
-        try
+    NpgsqlConnection? conn = null;
+    try
         {
             conn = DbHelper.OpenConnection(_connectionString);
 
@@ -273,7 +278,7 @@ public class AuthController : ControllerBase
         var role = DbHelper.GetUserRole(DbHelper.OpenConnection(_connectionString), username);
         var token = JwtHelper.GenerateToken(username, role, _jwtSecret);
         CookieHelper.AppendAuthToken(Response, token);
-        return Ok(new { message = "Token verified and refreshed" });
+        return Ok(new { username, role });
     }
 }
 
@@ -333,7 +338,7 @@ public static class JwtHelper
         var claims = new[]
         {
             new Claim(ClaimTypes.Name, username),
-            new Claim("role", role),
+            new Claim(ClaimTypes.Role, role),
             new Claim(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString())
         };
 

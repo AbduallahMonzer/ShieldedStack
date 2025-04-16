@@ -9,80 +9,78 @@ using Microsoft.Extensions.Logging;
 
 namespace JwtAuthApi.Controllers
 {
-    [ApiController]
-    [Route("api")]
-    public class UserController : ControllerBase
+[ApiController]
+[Route("api")]
+public class UserController : ControllerBase
+{
+    private readonly string _connectionString;
+    private readonly ILogger<UserController> _logger;
+
+    public UserController(IConfiguration configuration, ILogger<UserController> logger)
     {
-        private readonly string _connectionString;
-        private readonly ILogger<UserController> _logger;
+        _connectionString = configuration.GetConnectionString("DefaultConnection")
+            ?? throw new InvalidOperationException("Missing DB connection string");
+        _logger = logger;
+    }
 
-        public UserController(IConfiguration configuration, ILogger<UserController> logger)
-        {
-            _connectionString = configuration.GetConnectionString("DefaultConnection")
-                ?? throw new InvalidOperationException("Missing DB connection string");
-            _logger = logger;
-        }
+    private NpgsqlConnection OpenConnection()
+    {
+        var connection = new NpgsqlConnection(_connectionString);
+        connection.Open();
+        return connection;
+    }
 
-        private NpgsqlConnection OpenConnection()
-        {
-            var connection = new NpgsqlConnection(_connectionString);
-            connection.Open();
-            return connection;
-        }
+    private void AddParameter(NpgsqlCommand cmd, string paramName, object value)
+    {
+        var parameter = new NpgsqlParameter(paramName, value ?? DBNull.Value);
+        cmd.Parameters.Add(parameter);
+    }
 
-        private void AddParameter(NpgsqlCommand cmd, string paramName, object value)
+[HttpPost("new")]
+[Authorize]
+public IActionResult CompleteUserProfile([FromBody] User user)
+{
+    if (user == null || string.IsNullOrEmpty(user.Username) 
+        || string.IsNullOrEmpty(user.Password))
+    return BadRequest("Username and Password are required");
+
+    NpgsqlConnection? conn = null;
+
+    try
+    {
+        conn = OpenConnection();
+        var checkCmd = new NpgsqlCommand(@"SELECT COUNT(*) 
+            FROM user_account 
+            WHERE username = @username", 
+            conn);
+        AddParameter(checkCmd, "username", user.Username);
+        var userCount = (long)(checkCmd.ExecuteScalar() ?? 0);
+
+        if (userCount == 0)
+        return NotFound("User not found. Please sign up first.");
+
+        var updateCmd = new NpgsqlCommand(
+            @"UPDATE user_account 
+            SET password = @password, 
+            salt = @salt,
+            email = @email,
+            phone_number = @phone_number, 
+            role = @role 
+            WHERE username = @username", conn);
+
+        if (!string.IsNullOrEmpty(user.Password))
         {
-            var parameter = new NpgsqlParameter(paramName, NpgsqlTypes.NpgsqlDbType.Varchar)
+            var salt = PasswordHashUtility.GenerateSalt();
+            var hashedPassword = PasswordHashUtility.HashPassword(user.Password, salt);
+
+            AddParameter(updateCmd, "password", hashedPassword);
+            AddParameter(updateCmd, "salt", salt);
+        } 
+        else
             {
-                Value = value ?? DBNull.Value
-            };
-            cmd.Parameters.Add(parameter);
-        }
-
-        [HttpPost("new")]
-        [Authorize]
-        public IActionResult CompleteUserProfile([FromBody] User user)
-        {
-            if (user == null || string.IsNullOrEmpty(user.Username) 
-                || string.IsNullOrEmpty(user.Password))
-                return BadRequest("Username and Password are required");
-
-            NpgsqlConnection conn = null!;
-            try
-            {
-                conn = OpenConnection();
-
-                var checkCmd = new NpgsqlCommand(
-                    @"SELECT COUNT(*) FROM user_account WHERE username = @username", conn);
-                AddParameter(checkCmd, "username", user.Username);
-
-                var userCount = checkCmd.ExecuteScalar() as long?;
-
-                if (userCount == 0)
-                    return NotFound("User not found. Please sign up first.");
-
-                var updateCmd = new NpgsqlCommand(
-                    @"UPDATE user_account 
-                    SET password = @password, 
-                    email = @email,
-                    phone_number = @phone_number, 
-                    role = @role 
-                    WHERE username = @username", 
-                    conn);
-
-                if (!string.IsNullOrEmpty(user.Password))
-                {
-                    var salt = PasswordHashUtility.GenerateSalt();
-                    var hashedPassword = PasswordHashUtility.HashPassword(user.Password, salt);
-
-                    AddParameter(updateCmd, "password", hashedPassword);
-                    AddParameter(updateCmd, "salt", salt);
-                }
-                else
-                {
-                    AddParameter(updateCmd, "password", DBNull.Value);
-                    AddParameter(updateCmd, "salt", DBNull.Value);
-                }
+                AddParameter(updateCmd, "password", DBNull.Value);
+                AddParameter(updateCmd, "salt", DBNull.Value);
+            }
 
                 AddParameter(updateCmd, "email", user.Email!);
                 AddParameter(updateCmd, "phone_number", user.PhoneNumber!);
@@ -90,12 +88,13 @@ namespace JwtAuthApi.Controllers
                 AddParameter(updateCmd, "username", user.Username);
 
                 int rowsAffected = updateCmd.ExecuteNonQuery();
+
                 if (rowsAffected == 0)
                     return StatusCode(500, "Failed to update user profile.");
 
                 return Ok(new
                 {
-                    Message = "User profile updated successfully.",
+                    message = "User profile updated successfully.",
                     user.Username,
                     user.Email,
                     user.PhoneNumber,
@@ -109,30 +108,31 @@ namespace JwtAuthApi.Controllers
             }
             finally
             {
-                if (conn != null)
-                {
-                    conn.Close();
-                }
+                conn?.Close();
             }
         }
 
-        [HttpGet("list_users")]
-        [Authorize(Roles = "admin")]
-        public IActionResult GetUsers()
-        {
-            NpgsqlConnection? conn = null;
-            NpgsqlDataReader? reader = null;
+[HttpGet("list_users")]
+[Authorize(Roles = "admin")]
+public IActionResult GetUsers()
+{
+    NpgsqlConnection? conn = null;
+    NpgsqlDataReader? reader = null;
+    try
+    {
+        conn = OpenConnection();
+        var cmd = new NpgsqlCommand(@"SELECT 
+            id,     
+            username, 
+            email, 
+            phone_number, 
+            role 
+            FROM user_account", 
+            conn);
+            reader = cmd.ExecuteReader();
 
-            try
-            {
-                conn = OpenConnection();
-
-                var cmd = new NpgsqlCommand(@"SELECT id, username, email, phone_number, role 
-                    FROM user_account", conn);
-                reader = cmd.ExecuteReader();
-
-                var users = new List<User>();
-                while (reader.Read())
+        var users = new List<User>();
+            while (reader.Read())
                 {
                     users.Add(new User
                     {
@@ -153,15 +153,80 @@ namespace JwtAuthApi.Controllers
             }
             finally
             {
-                if (reader != null)
-                {
-                    reader.Close();
-                }
-                if (conn != null)
-                {
-                    conn.Close();
-                }
+                reader?.Close();
+                conn?.Close();
             }
         }
+
+
+[HttpPost("update_role")]
+[Authorize(Roles = "admin")]
+public IActionResult UpdateUserRole([FromBody] RoleUpdateModel model)
+{
+    if (model == null || model.UserId <= 0 
+        || string.IsNullOrWhiteSpace(model.NewRole))
+        return BadRequest("Invalid role update request.");
+
+    NpgsqlConnection? conn = null;
+
+    try
+        {
+            conn = OpenConnection();
+            var cmd = new NpgsqlCommand(@"UPDATE user_account  
+                SET role = @role   
+                WHERE id = @id", 
+                conn);
+
+            cmd.Parameters.Add("id", 
+                NpgsqlTypes.NpgsqlDbType.Integer).Value = model.UserId;
+            cmd.Parameters.Add("role", 
+                NpgsqlTypes.NpgsqlDbType.Varchar).Value = model.NewRole.ToLower();
+
+            int rowsAffected = cmd.ExecuteNonQuery();
+            if (rowsAffected == 0)
+                return NotFound("User not found.");
+                
+            return Ok(new { message = "Role updated successfully." });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error updating user role");
+            return StatusCode(500, $"Internal server error: {ex.Message}");
+        }
+        finally
+            {
+                conn?.Close();
+            }
+        }
+        public class RoleUpdateModel
+{
+    public int UserId { get; set; }
+    public string? NewRole { get; set; }
+}
+[Authorize(Roles = "admin")]
+[HttpGet("user/{id}")]
+public IActionResult GetUserById(int id)
+{
+    using var conn = OpenConnection();
+    var cmd = new NpgsqlCommand(@"
+        SELECT id, username, role 
+        FROM user_account 
+        WHERE id = @id", conn);
+
+    cmd.Parameters.Add("id", NpgsqlTypes.NpgsqlDbType.Integer).Value = id;
+    using var reader = cmd.ExecuteReader();
+    if (reader.Read())
+    {
+        var user = new {
+            id = reader.GetInt32(0),
+            username = reader.GetString(1),
+            role = reader.GetString(2)
+        };
+        return Ok(user);
+    }
+
+    return NotFound();
+}
+
     }
 }

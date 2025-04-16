@@ -1,12 +1,11 @@
-@JwtAuthApi_HostAddress = https://localhost:7164/auth
+@JwtAuthApi_HostAddress = https://localhost:7164/api    
 
-POST {{JwtAuthApi_HostAddress}}/login
+POST {{JwtAuthApi_HostAddress}}/update_role
 Content-Type: application/json
-#Authorization: Bearer 
-
+Authorization: Bearer {{AuthToken}}
 {
-    "Username": "teest",
-    "Password": "1234"
+  "userId": 5,
+  "newRole": "a.monzer"
 }
 
 ###
