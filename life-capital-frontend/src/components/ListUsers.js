@@ -1,14 +1,17 @@
 import React, { useEffect, useState } from "react";
-import { Container, Table, Spinner } from "react-bootstrap";
+import { Container, Table, Spinner, Alert } from "react-bootstrap";
 import { Link } from "react-router-dom";
 import { CONSTANTS } from "../constants";
 
 const ListUsers = () => {
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
 
   useEffect(() => {
     const fetchUsers = async () => {
+      setLoading(true);
+      setError(null);
       try {
         const response = await fetch(
           `${CONSTANTS.api_base_url}/api/list_users`,
@@ -21,13 +24,11 @@ const ListUsers = () => {
         if (response.ok) {
           const data = await response.json();
           setUsers(data);
-        } else if (response.status === 401) {
-          alert("Unauthorized: You must be an admin to view this page.");
         } else {
-          alert("Failed to load users.");
+          setError("Failed to load users.");
         }
       } catch (error) {
-        alert("Network error: " + error.message);
+        setError("An error occurred while fetching users.");
       } finally {
         setLoading(false);
       }
@@ -36,60 +37,39 @@ const ListUsers = () => {
     fetchUsers();
   }, []);
 
-  const handleRoleChange = async (id, newRole) => {
-    const user = users.find((u) => u.id === id);
-    if (!user || newRole === user.role) {
-      alert("This user already has that role.");
-      return;
-    }
+  if (loading) {
+    return (
+      <Container className="text-center mt-5">
+        <Spinner animation="border" variant="primary" />
+        <div className="mt-3">Loading users...</div>
+      </Container>
+    );
+  }
 
-    try {
-      const response = await fetch(
-        `${CONSTANTS.api_base_url}/api/update_role`,
-        {
-          method: "POST",
-          credentials: "include",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({ userId: id, newRole }),
-        }
-      );
-
-      if (response.ok) {
-        setUsers((prevUsers) =>
-          prevUsers.map((user) =>
-            user.id === id ? { ...user, role: newRole } : user
-          )
-        );
-      } else {
-        alert("Failed to update role.");
-      }
-    } catch (error) {
-      alert("Network error while updating role.");
-    }
-  };
+  if (error) {
+    return (
+      <Container className="mt-5">
+        <Alert variant="danger">{error}</Alert>
+      </Container>
+    );
+  }
 
   return (
     <Container className="mt-5">
       <h2>User Management</h2>
-      {loading ? (
-        <div className="text-center mt-4">
-          <Spinner animation="border" />
-        </div>
-      ) : (
-        <Table striped bordered hover responsive>
-          <thead>
-            <tr>
-              <th>#</th>
-              <th>Username</th>
-              <th>Email</th>
-              <th>Phone Number</th>
-              <th>Role</th>
-            </tr>
-          </thead>
-          <tbody>
-            {users.map((user) => (
+      <Table striped bordered hover responsive>
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>Username</th>
+            <th>Email</th>
+            <th>Phone Number</th>
+            <th>Role</th>
+          </tr>
+        </thead>
+        <tbody>
+          {users.length > 0 ? (
+            users.map((user) => (
               <tr key={user.id}>
                 <td>{user.id}</td>
                 <td>
@@ -102,12 +82,16 @@ const ListUsers = () => {
                 </td>
                 <td>{user.email}</td>
                 <td>{user.phone_number}</td>
-                <td></td>
+                <td>{user.role}</td>
               </tr>
-            ))}
-          </tbody>
-        </Table>
-      )}
+            ))
+          ) : (
+            <tr>
+              <td colSpan="5">No users found.</td>
+            </tr>
+          )}
+        </tbody>
+      </Table>
     </Container>
   );
 };

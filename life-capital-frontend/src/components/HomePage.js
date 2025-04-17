@@ -1,46 +1,18 @@
-import { useEffect, useState, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
-import { Container, Spinner, Alert, Row, Col, Card } from "react-bootstrap";
-import { CONSTANTS } from "../constants";
+import { Container, Spinner, Row, Col, Card } from "react-bootstrap";
 import NavbarComponent from "./NavbarComponent";
+import { useAuth } from "../context/AuthContext";
+import { useEffect } from "react";
 
 const HomePage = () => {
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
+  const { role, loading, username } = useAuth();
   const navigate = useNavigate();
 
-  const onInvalidToken = useCallback(() => {
-    navigate("/login");
-  }, [navigate]);
-
   useEffect(() => {
-    const verifyToken = async () => {
-      let validToken = false;
-
-      try {
-        const response = await fetch(
-          `${CONSTANTS.api_base_url}/auth/token/verify-refresh`,
-          {
-            method: "POST",
-            credentials: "include",
-          }
-        );
-
-        if (response.ok) {
-          validToken = true;
-        }
-      } catch (err) {
-        console.error(err);
-        setError("Something went wrong.");
-      } finally {
-        setLoading(false);
-
-        if (!validToken) onInvalidToken();
-      }
-    };
-
-    verifyToken();
-  }, [onInvalidToken]);
+    if (!loading && !role) {
+      navigate("/login");
+    }
+  }, [loading, role, navigate]);
 
   if (loading) {
     return (
@@ -50,19 +22,9 @@ const HomePage = () => {
     );
   }
 
-  if (error) {
-    return (
-      <Container className="mt-5">
-        <Alert variant="danger" className="text-center fw-bold fs-5 shadow">
-          {error}
-        </Alert>
-      </Container>
-    );
-  }
-
   return (
     <>
-      <NavbarComponent username="User" />
+      <NavbarComponent username={username || "User"} />{" "}
       <Container className="d-flex justify-content-center align-items-center min-vh-100">
         <Row>
           <Col>

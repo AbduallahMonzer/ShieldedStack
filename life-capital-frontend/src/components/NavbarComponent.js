@@ -1,6 +1,7 @@
-import React, { useEffect, useState } from "react";
+import React, { useState } from "react";
 import { Navbar, Container, Offcanvas, Button } from "react-bootstrap";
 import "bootstrap/dist/css/bootstrap.min.css";
+import { useAuth } from "../context/AuthContext";
 import { CONSTANTS } from "../constants";
 
 const getRandomColor = () => {
@@ -9,39 +10,17 @@ const getRandomColor = () => {
 };
 
 const NavbarComponent = () => {
-  const username = localStorage.getItem("username") || "User";
+  const { username, role } = useAuth();
   const avatarColor = getRandomColor();
   const [showDrawer, setShowDrawer] = useState(false);
-  const [role, setRole] = useState(null);
+
+  const initial =
+    typeof username === "string" && username.length > 0
+      ? username.charAt(0).toUpperCase()
+      : "?";
 
   const handleToggleDrawer = () => setShowDrawer(!showDrawer);
   const handleCloseDrawer = () => setShowDrawer(false);
-
-  // Fetch user role from backend
-  useEffect(() => {
-    const fetchRole = async () => {
-      try {
-        const res = await fetch(
-          `${CONSTANTS.api_base_url}/auth/token/verify-refresh`,
-          {
-            method: "POST",
-            credentials: "include",
-          }
-        );
-
-        if (res.ok) {
-          const data = await res.json();
-          setRole(data.role); // ← Store role for later use
-        } else {
-          console.warn("Failed to verify and fetch role.");
-        }
-      } catch (err) {
-        console.error("Error fetching role", err);
-      }
-    };
-
-    fetchRole();
-  }, []);
 
   return (
     <>
@@ -51,30 +30,28 @@ const NavbarComponent = () => {
             Life Capital
           </Navbar.Brand>
 
-          {!showDrawer && (
+          <div
+            className="ms-auto d-flex align-items-center"
+            onClick={handleToggleDrawer}
+            style={{ cursor: "pointer" }}
+          >
             <div
-              className="ms-auto d-flex align-items-center"
-              onClick={handleToggleDrawer}
-              style={{ cursor: "pointer" }}
+              className="rounded-circle me-2"
+              style={{
+                width: "40px",
+                height: "40px",
+                backgroundColor: avatarColor,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                color: "#fff",
+                fontWeight: "bold",
+              }}
             >
-              <div
-                className="rounded-circle me-2"
-                style={{
-                  width: "40px",
-                  height: "40px",
-                  backgroundColor: avatarColor,
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  color: "#fff",
-                  fontWeight: "bold",
-                }}
-              >
-                {username.charAt(0).toUpperCase()}
-              </div>
-              <span className="fw-semibold">{username}</span>
+              {initial}
             </div>
-          )}
+            <span className="fw-semibold">{username}</span>
+          </div>
         </Container>
       </Navbar>
 
@@ -95,9 +72,9 @@ const NavbarComponent = () => {
                 marginRight: "10px",
               }}
             >
-              {username.charAt(0).toUpperCase()}
+              {initial}
             </div>
-            <span className="fw-semibold">{username}</span>
+            <span className="fw-semibold ms-2">{username}</span>
           </Offcanvas.Title>
         </Offcanvas.Header>
 

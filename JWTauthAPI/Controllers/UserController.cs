@@ -114,49 +114,81 @@ public IActionResult CompleteUserProfile([FromBody] User user)
 
 [HttpGet("list_users")]
 [Authorize(Roles = "admin")]
-public IActionResult GetUsers()
+public IActionResult GetUsers([FromQuery] int page = 1, [FromQuery] int limit = 10)
 {
     NpgsqlConnection? conn = null;
     NpgsqlDataReader? reader = null;
+
+    if (page <= 0 || limit <= 0)
+    {
+        return BadRequest("Page and limit must be positive integers.");
+    }
+
     try
     {
         conn = OpenConnection();
-        var cmd = new NpgsqlCommand(@"SELECT 
-            id,     
-            username, 
-            email, 
-            phone_number, 
-            role 
-            FROM user_account", 
-            conn);
-            reader = cmd.ExecuteReader();
+
+        int offset = (page - 1) * limit;
+
+        var cmd = new NpgsqlCommand(@$"
+            SELECT 
+                id,     
+                username, 
+                email, 
+                phone_number, 
+                role 
+            FROM user_account
+            ORDER BY username
+            LIMIT @limit OFFSET @offset", conn);
+
+
+        cmd.Parameters.AddWithValue("limit", limit);
+        cmd.Parameters.AddWithValue("offset", offset);
+
+        reader = cmd.ExecuteReader();
 
         var users = new List<User>();
-            while (reader.Read())
-                {
-                    users.Add(new User
-                    {
-                        Id = reader.GetInt32(0),
-                        Username = reader.GetString(1),
-                        Email = reader.IsDBNull(2) ? null : reader.GetString(2),
-                        PhoneNumber = reader.IsDBNull(3) ? null : reader.GetString(3),
-                        Role = reader.IsDBNull(4) ? null : reader.GetString(4)
-                    });
-                }
-
-                return Ok(users);
-            }
-            catch (Exception ex)
+        while (reader.Read())
+        {
+            users.Add(new User
             {
-                _logger.LogError(ex, "Error occurred while fetching users list");
-                return StatusCode(500, $"Internal server error: {ex.Message}");
-            }
-            finally
-            {
-                reader?.Close();
-                conn?.Close();
-            }
+                Id = reader.GetInt32(0),
+                Username = reader.GetString(1),
+                Email = reader.IsDBNull(2) ? null : reader.GetString(2),
+                PhoneNumber = reader.IsDBNull(3) ? null : reader.GetString(3),
+                Role = reader.IsDBNull(4) ? null : reader.GetString(4)
+            });
         }
+
+
+        var totalCountCmd = new NpgsqlCommand("SELECT COUNT(*) FROM user_account", conn);
+        var totalCount = (long?)totalCountCmd.ExecuteScalar() ?? 0;
+
+
+
+        int totalPages = (int)Math.Ceiling(totalCount / (double)limit);
+
+
+        return Ok(new
+        {
+            Users = users,
+            TotalCount = totalCount,
+            TotalPages = totalPages,
+            CurrentPage = page
+        });
+    }
+    catch (Exception ex)
+    {
+        _logger.LogError(ex, "Error occurred while fetching users list");
+        return StatusCode(500, $"Internal server error: {ex.Message}");
+    }
+    finally
+    {
+        reader?.Close();
+        conn?.Close();
+    }
+}
+
 
 
 [HttpPost("update_role")]

@@ -1,46 +1,33 @@
+// components/Login.js
 import React, { useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import { Form, Button, Container, Row, Col, Alert } from "react-bootstrap";
 import "bootstrap/dist/css/bootstrap.min.css";
-import { CONSTANTS } from "../constants";
+import { useAuth } from "../context/AuthContext";
 
 const Login = () => {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
   const navigate = useNavigate();
+  const { login } = useAuth();
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     setErrorMessage("");
 
-    try {
-      const res = await fetch(`${CONSTANTS.api_base_url}/auth/login`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({ username, password }),
-      });
-
-      const data = await res.json();
-
-      if (res.ok) {
-        navigate("/");
-      } else {
-        setErrorMessage(data.message || "Failed to authenticate");
-      }
-    } catch {
-      setErrorMessage("An unexpected error occurred");
+    const result = await login(username, password);
+    if (result.success) {
+      navigate("/");
+    } else {
+      setErrorMessage(result.message);
     }
   };
 
-  const generateRandomState = () => {
-    return Math.random().toString(36).substring(2, 15);
-  };
+  const generateRandomState = () => Math.random().toString(36).substring(2, 15);
 
   const handleOAuthLogin = () => {
     const state = generateRandomState();
-
     const params = new URLSearchParams({
       response_type: "code",
       client_id: "2076c247bac9",
@@ -48,7 +35,6 @@ const Login = () => {
       scope: "profile",
       state,
     });
-
     window.location.href = `https://mail.lifecapital.eg/oauth/authorize?${params.toString()}`;
   };
 
